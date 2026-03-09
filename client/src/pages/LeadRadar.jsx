@@ -6,6 +6,20 @@ import { Radar, Play, Check, X, Clock, RefreshCw } from 'lucide-react';
 
 const REVIEWER = 'S'; // Default reviewer — could be dynamic
 
+// ─── Target role fallback (mirrors server/services/emailService.js) ───────────
+function targetRoleLabel(lead) {
+  if (lead.role) return lead.role;
+  const defaults = {
+    school:    'Principal / Vice Principal / Counselling Coordinator',
+    coaching:  'Centre Director / Academic Head',
+    corporate: 'HR Head / CHRO / Wellness Manager',
+    clinic:    'Founder / Lead Psychologist / Director',
+    ngo:       'Programme Director / CEO',
+    rehab:     'Centre Director / Head Therapist',
+  };
+  return defaults[lead.type] || 'Decision Maker';
+}
+
 export default function LeadRadar() {
   const [queue, setQueue] = useState([]);
   const [logs, setLogs] = useState([]);
@@ -229,12 +243,30 @@ function QueueCard({ item, showActions, onApprove, onReject }) {
         )}
       </div>
 
-      {/* Contact */}
-      {item.contact_name && (
-        <div style={{ fontSize: '0.8rem', marginBottom: 8 }}>
-          👤 {item.contact_name}{item.role ? ` · ${item.role}` : ''}
+      {/* Target Role for Outreach — always shown */}
+      <div style={{
+        background: 'var(--mist)', border: '1px solid var(--purple-light, #e9e0ff)',
+        borderLeft: '3px solid var(--purple)', borderRadius: 6,
+        padding: '7px 10px', marginBottom: 8, fontSize: '0.8rem',
+      }}>
+        <span style={{ color: 'var(--purple)', fontWeight: 700, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+          🎯 Target Role for Outreach
+        </span>
+        <div style={{ fontWeight: 600, color: 'var(--ink)', marginTop: 2 }}>
+          {targetRoleLabel(item)}
         </div>
-      )}
+        {item.contact_name && (
+          <div style={{ marginTop: 3, color: 'var(--text-muted)' }}>
+            👤 {item.contact_name}{item.role ? ` · ${item.role}` : ''}
+          </div>
+        )}
+        {item.email && (
+          <div style={{ marginTop: 2, color: 'var(--text-muted)' }}>📧 {item.email}</div>
+        )}
+        {item.phone && (
+          <div style={{ marginTop: 2, color: 'var(--text-muted)' }}>📞 {item.phone}</div>
+        )}
+      </div>
 
       {/* Estimated value */}
       {item.estimated_value > 0 && (

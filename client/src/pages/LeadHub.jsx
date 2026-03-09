@@ -5,6 +5,20 @@ import toast from 'react-hot-toast';
 import { Plus, Search, X, ChevronDown, Trash2, ExternalLink } from 'lucide-react';
 
 const STAGES = ['New', 'Contacted', 'Proposal Sent', 'Negotiation', 'Won', 'Lost'];
+
+// ─── Target role fallback (mirrors emailService.js) ───────────────────────────
+function targetRoleLabel(lead) {
+  if (lead && lead.role) return lead.role;
+  const defaults = {
+    school:    'Principal / Vice Principal / Counselling Coordinator',
+    coaching:  'Centre Director / Academic Head',
+    corporate: 'HR Head / CHRO / Wellness Manager',
+    clinic:    'Founder / Lead Psychologist / Director',
+    ngo:       'Programme Director / CEO',
+    rehab:     'Centre Director / Head Therapist',
+  };
+  return (lead && defaults[lead.type]) || 'Decision Maker';
+}
 const EMPTY_LEAD = {
   type: 'school', org_name: '', contact_name: '', role: '', city: '', state: '',
   email: '', phone: '', linkedin_url: '', employees_or_students: '', stage: 'New',
@@ -125,7 +139,7 @@ export default function LeadHub() {
             <tr>
               <th>Organisation</th>
               <th>Type</th>
-              <th>Contact</th>
+              <th>🎯 Target / Contact</th>
               <th>City</th>
               <th>Stage</th>
               <th>Score</th>
@@ -147,7 +161,16 @@ export default function LeadHub() {
                   {lead.source === 'auto_discovered' && <span style={{ fontSize: '0.68rem', color: 'var(--teal)', fontWeight: 600 }}>📡 Auto</span>}
                 </td>
                 <td><span className={`badge badge-${lead.type}`}>{lead.type}</span></td>
-                <td><div className="truncate" style={{ maxWidth: 140 }}>{lead.contact_name || '—'}</div></td>
+                <td>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--purple)', fontWeight: 700 }}>
+                    🎯 {targetRoleLabel(lead)}
+                  </div>
+                  {lead.contact_name && (
+                    <div className="truncate" style={{ maxWidth: 140, fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                      👤 {lead.contact_name}
+                    </div>
+                  )}
+                </td>
                 <td>{lead.city || '—'}</td>
                 <td><span className={`badge ${stageBadgeClass(lead.stage)}`}>{lead.stage}</span></td>
                 <td><span className={`score-pill ${scoreClass(lead.ai_score)}`}>{lead.ai_score}</span></td>
@@ -196,8 +219,24 @@ export default function LeadHub() {
 
             {/* Details grid */}
             <div className="grid-2" style={{ gap: 14, marginBottom: 20 }}>
-              <DetailField label="Contact" value={selected.contact_name} />
-              <DetailField label="Role" value={selected.role} />
+              {/* Target Role — always shown with fallback */}
+              <tr>
+                <td colSpan={2} style={{ paddingTop: 6, paddingBottom: 6 }}>
+                  <div style={{
+                    background: '#f4f0fd', borderLeft: '3px solid var(--purple)',
+                    borderRadius: '0 6px 6px 0', padding: '8px 12px',
+                  }}>
+                    <div style={{ fontSize: '0.68rem', color: 'var(--purple)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                      🎯 Target Role for Outreach
+                    </div>
+                    <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--ink)', marginTop: 3 }}>
+                      {targetRoleLabel(selected)}
+                    </div>
+                  </div>
+                </td>
+              </tr>
+              <DetailField label="Contact Name" value={selected.contact_name} />
+              <DetailField label="Contact Role" value={selected.role} />
               <DetailField label="Email" value={selected.email} />
               <DetailField label="Phone" value={selected.phone} />
               <DetailField label="City" value={selected.city} />
