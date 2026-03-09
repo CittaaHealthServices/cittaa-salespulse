@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const Followup = require('../models/Followup');
 const Activity = require('../models/Activity');
+const Lead = require('../models/Lead');
+const { sendFollowupScheduledEmail } = require('../services/emailService');
 
 // GET /api/followups
 router.get('/', async (req, res) => {
@@ -33,8 +35,10 @@ router.post('/', async (req, res) => {
       description: `Follow-up scheduled: ${req.body.action} via ${req.body.channel}`,
       created_by: req.body.owner || 'S',
     });
-    const populated = await Followup.findById(followup._id).populate('lead_id', 'org_name type city');
+    const populated = await Followup.findById(followup._id).populate('lead_id', 'org_name type city contact_name phone');
     res.status(201).json(populated);
+    // Fire-and-forget email notification
+    sendFollowupScheduledEmail(followup, populated.lead_id).catch(console.error);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

@@ -3,33 +3,49 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const LeadQueue = require('../models/LeadQueue');
 const Lead = require('../models/Lead');
 const DiscoveryLog = require('../models/DiscoveryLog');
+const { sendRadarDiscoveryEmail } = require('../services/emailService');
 
 const levenshtein = require('fast-levenshtein');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // ─── Discovery Queries ───────────────────────────────────────────────────────
+// Covers: school websites, LinkedIn-style people searches, job boards,
+//         corporate HR databases, and general web search
 
 const SCHOOL_QUERIES = [
-  'list of private CBSE ICSE schools in Hyderabad with 1000+ students 2024 2025',
+  // Direct school website / directory sources
+  'site:schoolmykids.com OR site:cbse.gov.in schools Hyderabad Telangana 1000+ students',
+  'site:indiaschoolinfo.com OR site:schoolserp.com CBSE ICSE schools Hyderabad list',
+  'list of private CBSE ICSE schools Hyderabad with 1000+ students 2024 2025',
   'new schools opening Hyderabad Telangana 2024 2025 admissions',
   'top international schools Hyderabad Secunderabad contact principal',
-  'DPS affiliated schools Hyderabad Telangana',
-  'CBSE schools Hyderabad with student strength above 2000',
-  'private schools Hyderabad not yet using school counsellor mental health',
-  'schools Hyderabad hiring school psychologist counsellor 2024 2025',
-  'best schools Kompally Bachupally Gachibowli Kondapur Hyderabad',
+  'DPS affiliated schools Hyderabad Telangana site:dpsbharat.com OR site:dps.in',
+  'CBSE schools Hyderabad student strength above 2000 school counsellor vacant',
+  'private schools Hyderabad not yet using student mental health wellness program',
+  // Job-board sourced: schools hiring counsellors = no counsellor yet
+  'site:naukri.com OR site:shine.com school counsellor psychologist Hyderabad hiring 2024 2025',
+  'site:linkedin.com/jobs school counsellor Hyderabad principal HR contact',
+  'CBSE ICSE schools Gachibowli Kompally Bachupally Kokapet Hyderabad 2024',
+  'international baccalaureate IB schools Hyderabad Telangana 2024',
 ];
 
 const CORP_QUERIES = [
-  'IT companies Hyderabad HITEC City 500+ employees HR contact 2024 2025',
-  'companies hiring HR manager Hyderabad Telangana 2024',
-  'Telangana companies employee wellness mental health program',
-  'startups Hyderabad 200+ employees T-Hub TASK funded 2024',
-  'MNCs Hyderabad Cyberabad SEZ employee strength HR head',
-  'companies Hyderabad recently expanded headcount hiring 2024 2025',
-  'pharmaceutical manufacturing companies Hyderabad 1000+ employees',
-  'Hyderabad companies won best employer award 2024',
+  // LinkedIn company search style queries
+  'site:linkedin.com/company HR head CHRO wellness Hyderabad Telangana 500+ employees',
+  'site:linkedin.com HR Manager employee wellness program Hyderabad hiring 2024',
+  // Job boards sourced: companies hiring wellness/EAP roles = no program yet
+  'site:naukri.com OR site:shine.com employee wellness mental health Hyderabad 2024 2025',
+  'site:instahyre.com OR site:foundit.in CHRO HR director Hyderabad corporate wellness',
+  // General company databases
+  'IT companies Hyderabad HITEC City Cyberabad 500+ employees HR contact 2024 2025',
+  'Telangana companies employee wellness EAP mental health program 2024',
+  'T-Hub TASK WE-Hub funded startups Hyderabad 200+ employees 2024 2025',
+  'MNCs Hyderabad SEZ special economic zone employee strength HR head',
+  'pharmaceutical manufacturing companies Hyderabad Genome Valley 1000+ employees',
+  'Hyderabad companies best employer award 2024 employee wellbeing',
+  'GCCs global capability centres Hyderabad Telangana 2024 HR head wellness',
+  'site:ambitionbox.com OR site:glassdoor.com companies Hyderabad employee wellbeing reviews',
 ];
 
 // ─── Discovery Prompt ────────────────────────────────────────────────────────
@@ -227,6 +243,18 @@ async function runDiscovery(queries = null) {
     });
 
     console.log(`[Lead Discovery] Done — Found: ${totalFound}, Added: ${totalAdded}, Skipped: ${totalSkipped}`);
+
+    // Email Sairam + Abhijay if new leads were added to the queue
+    if (totalAdded > 0) {
+      try {
+        const newItems = await LeadQueue.find({ status: 'pending' })
+          .sort({ discovered_at: -1 })
+          .limit(totalAdded);
+        await sendRadarDiscoveryEmail(newItems);
+      } catch (emailErr) {
+        console.error('[Lead Discovery] Email notification failed:', emailErr.message);
+      }
+    }
   } catch (err) {
     await DiscoveryLog.findByIdAndUpdate(log._id, {
       leads_found: totalFound,

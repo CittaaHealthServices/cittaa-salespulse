@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Lead = require('../models/Lead');
 const Activity = require('../models/Activity');
+const { sendNewLeadEmail } = require('../services/emailService');
 
 // GET /api/leads
 router.get('/', async (req, res) => {
@@ -57,6 +58,8 @@ router.post('/', async (req, res) => {
       created_by: req.body.owner || 'S',
     });
     res.status(201).json(lead);
+    // Fire-and-forget email (after response sent)
+    sendNewLeadEmail(lead).catch(console.error);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

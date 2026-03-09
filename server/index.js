@@ -4,6 +4,7 @@ const cors = require('cors');
 const path = require('path');
 const mongoose = require('mongoose');
 const { startCronJobs } = require('./jobs/leadDiscovery');
+const { startReminderJobs } = require('./jobs/reminderEngine');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -54,6 +55,8 @@ mongoose
       console.log(`🚀 Cittaa SalesPulse server on port ${PORT}`);
       // Start background lead discovery cron
       startCronJobs();
+      // Start reminder engine (daily digest, visit alerts, overdue summaries)
+      startReminderJobs();
     });
   })
   .catch((err) => {

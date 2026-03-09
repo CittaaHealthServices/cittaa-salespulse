@@ -5,6 +5,7 @@ const Lead = require('../models/Lead');
 const Activity = require('../models/Activity');
 const DiscoveryLog = require('../models/DiscoveryLog');
 const { runDiscovery } = require('../jobs/leadDiscovery');
+const { sendLeadApprovedEmail } = require('../services/emailService');
 
 // GET /api/radar/queue
 router.get('/queue', async (req, res) => {
@@ -63,6 +64,8 @@ router.post('/approve/:id', async (req, res) => {
     });
 
     res.json({ lead, message: 'Approved and added to Lead Hub' });
+    // Fire-and-forget email notification
+    sendLeadApprovedEmail(lead, req.body.reviewed_by || 'S').catch(console.error);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
