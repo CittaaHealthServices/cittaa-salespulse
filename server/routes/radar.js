@@ -4,7 +4,7 @@ const LeadQueue = require('../models/LeadQueue');
 const Lead = require('../models/Lead');
 const Activity = require('../models/Activity');
 const DiscoveryLog = require('../models/DiscoveryLog');
-const { runDiscovery } = require('../jobs/leadDiscovery');
+const { runDiscovery, runTestDiscovery } = require('../jobs/leadDiscovery');
 const { sendLeadApprovedEmail } = require('../services/emailService');
 
 // GET /api/radar/queue
@@ -104,6 +104,21 @@ router.post('/run-now', async (req, res) => {
     runDiscovery().catch(console.error);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/radar/debug — run ONE test query and return raw output (for debugging)
+router.get('/debug', async (req, res) => {
+  try {
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(500).json({ error: 'GEMINI_API_KEY not set in environment' });
+    }
+    console.log('[Radar Debug] Running test discovery query...');
+    const result = await runTestDiscovery();
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('[Radar Debug] Error:', err.message);
+    res.status(500).json({ error: err.message, hint: 'Check GEMINI_API_KEY and model availability' });
   }
 });
 
