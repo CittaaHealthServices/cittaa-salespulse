@@ -19,7 +19,7 @@ const leadSchema = new mongoose.Schema({
   contract_value: { type: Number, default: 0 },
   ai_score: { type: Number, min: 0, max: 100, default: 50 },
   priority: { type: String, enum: ['high', 'medium', 'low'], default: 'medium' },
-  owner: { type: String, enum: ['S', 'A'], default: 'S' },
+  owner: { type: String, enum: ['S', 'A', 'P'], default: 'S' },
   source: { type: String, enum: ['manual', 'auto_discovered', 'imported'], default: 'manual' },
   discovery_source: {
     type: String,

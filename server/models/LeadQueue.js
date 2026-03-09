@@ -17,7 +17,7 @@ const leadQueueSchema = new mongoose.Schema({
   discovery_query: { type: String },
   source_url: { type: String },
   status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
-  reviewed_by: { type: String, enum: ['S', 'A', null], default: null },
+  reviewed_by: { type: String, enum: ['S', 'A', 'P', null], default: null },
   discovered_at: { type: Date, default: Date.now },
   reviewed_at: { type: Date },
 });
