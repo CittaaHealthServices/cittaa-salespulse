@@ -106,7 +106,7 @@ ${custom_context ? `Additional context: ${custom_context}` : ''}
 
 Write the message now.`;
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const result = await model.generateContent([systemPrompt, userPrompt].join('\n\n'));
     const content = result.response.text();
 

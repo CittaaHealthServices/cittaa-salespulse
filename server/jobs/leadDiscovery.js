@@ -169,11 +169,11 @@ async function runDiscovery(queries = null) {
   try {
     // Use Gemini with Google Search grounding
     const model = genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       tools: [{ googleSearch: {} }],
     });
 
-    const scoreModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const scoreModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
     for (const query of selectedQueries) {
       console.log(`[Lead Discovery] Running query: ${query}`);
