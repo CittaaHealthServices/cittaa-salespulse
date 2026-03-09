@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const leadQueueSchema = new mongoose.Schema({
-  type: { type: String, enum: ['school', 'corporate'], required: true },
+  type: { type: String, enum: ['school', 'corporate', 'clinic', 'ngo', 'rehab', 'coaching'], required: true },
   org_name: { type: String, required: true, trim: true },
   contact_name: { type: String, trim: true },
   role: { type: String, trim: true },
