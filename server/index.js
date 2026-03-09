@@ -35,16 +35,13 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// ─── Serve React frontend in production ───────────────────────────────────────
-if (process.env.NODE_ENV === 'production') {
-  const clientDist = path.join(__dirname, '../client/dist');
-  app.use(express.static(clientDist));
-  app.get('*', (req, res) => {
-    if (!req.path.startsWith('/api')) {
-      res.sendFile(path.join(clientDist, 'index.html'));
-    }
-  });
-}
+// ─── Serve React frontend (always — Railway serves single service) ────────────
+const clientDist = path.join(__dirname, '../client/dist');
+app.use(express.static(clientDist));
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api')) return next();
+  res.sendFile(path.join(clientDist, 'index.html'));
+});
 
 // ─── MongoDB + Start ──────────────────────────────────────────────────────────
 mongoose
