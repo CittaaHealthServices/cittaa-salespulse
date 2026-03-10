@@ -6,8 +6,9 @@ const leadQueueSchema = new mongoose.Schema({
   city:                  { type: String, trim: true },
   state:                 { type: String, trim: true },
   contact_name:          { type: String, trim: true },
-  role:                  { type: String, trim: true },       // actual contact title found by AI
-  target_role:           { type: String, trim: true },       // role Cittaa should approach
+  role:                  { type: String, trim: true },            // contact's actual job title
+  target_role:           { type: String, trim: true },            // decision-maker Cittaa should approach
+  job_title_hiring_for:  { type: String, trim: true },            // job they posted (proof of need)
   email:                 { type: String, trim: true, lowercase: true },
   phone:                 { type: String, trim: true },
   employees_or_students: { type: Number },
@@ -15,9 +16,9 @@ const leadQueueSchema = new mongoose.Schema({
   ai_score:              { type: Number, min: 0, max: 100 },
   ai_reasoning:          { type: String },
   why_good_lead:         { type: String },
-  discovery_source:      { type: String },
-  discovery_query:       { type: String },   // exact search query that found this lead
-  source_url:            { type: String },   // website URL this lead was verified on
+  discovery_source:      { type: String },                        // e.g. "Naukri job posting", "LinkedIn Jobs"
+  discovery_query:       { type: String },                        // exact search query used
+  source_url:            { type: String },                        // direct job post URL
   status:                { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
   reviewed_by:           { type: String, enum: ['S', 'A', 'P', null], default: null },
   reviewed_at:           { type: Date },

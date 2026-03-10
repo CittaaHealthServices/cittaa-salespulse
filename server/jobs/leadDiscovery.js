@@ -9,187 +9,232 @@ const levenshtein = require('fast-levenshtein');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // ─── Query Bank ───────────────────────────────────────────────────────────────
-// Each query tagged: target_role (who to approach), type, region
-// South India = Telangana, AP, Karnataka, Tamil Nadu, Kerala — priority
-// All India coverage included
+// ALL queries target JOB POSTINGS on LinkedIn, Naukri, Indeed, Shine, Glassdoor
+// Logic: if a company is HIRING for a counsellor / wellness role → they need Cittaa
+// source_url = the actual job post = 100% authentic, verifiable lead
+//
+// target_role = person who APPROVED the job post (the decision-maker to approach)
+// South India priority: Telangana, AP, Karnataka, Tamil Nadu, Kerala
 
 const QUERIES = [
-  // ── SCHOOLS / COACHING ──────────────────────────────────────────────────
+  // ── SCHOOLS — hiring school counsellor / psychologist ─────────────────────
   {
-    q: 'site:schoolmykids.com OR site:cbse.gov.in CBSE schools Hyderabad Telangana student counsellor mental health 2025',
+    q: 'site:naukri.com "school counsellor" OR "school psychologist" Hyderabad Telangana 2024 2025',
     target_role: 'Principal / Vice Principal',
     type: 'school', region: 'Telangana',
+    platform: 'Naukri',
   },
   {
-    q: 'site:justdial.com special education autism ADHD school Hyderabad Secunderabad contact principal phone',
+    q: 'site:linkedin.com/jobs "school counsellor" OR "student counsellor" Hyderabad Bangalore Chennai 2025',
+    target_role: 'Principal / Vice Principal',
+    type: 'school', region: 'South India',
+    platform: 'LinkedIn Jobs',
+  },
+  {
+    q: 'site:naukri.com "special educator" OR "special education teacher" Hyderabad Bangalore Chennai Pune 2025',
     target_role: 'Principal / Special Education Coordinator',
-    type: 'school', region: 'Telangana',
+    type: 'school', region: 'South India',
+    platform: 'Naukri',
   },
   {
-    q: 'CBSE ICSE schools Bangalore Karnataka NEP 2020 student wellbeing counsellor vacancy 2025',
+    q: 'site:shine.com "school counsellor" OR "student wellbeing" Hyderabad Secunderabad Bangalore 2025',
     target_role: 'Principal / Counselling Coordinator',
-    type: 'school', region: 'Karnataka',
+    type: 'school', region: 'South India',
+    platform: 'Shine',
   },
   {
-    q: 'schools Chennai Tamil Nadu student mental health counsellor CBSE ICSE 2025 special education',
+    q: 'site:naukri.com "child psychologist" OR "counselling psychologist" school Hyderabad Chennai Bangalore 2025',
+    target_role: 'Principal / Founder',
+    type: 'school', region: 'South India',
+    platform: 'Naukri',
+  },
+  {
+    q: 'site:indeed.com "school counsellor" OR "student mental health" India 2025',
     target_role: 'Principal / Vice Principal',
-    type: 'school', region: 'Tamil Nadu',
+    type: 'school', region: 'All India',
+    platform: 'Indeed',
   },
   {
-    q: 'schools Kerala Kochi Trivandrum student wellbeing counsellor NEP 2020 mental health program',
+    q: 'site:naukri.com "school counsellor" OR "student counsellor" Chennai Tamil Nadu Kerala 2025',
     target_role: 'Principal / Counselling Head',
-    type: 'school', region: 'Kerala',
+    type: 'school', region: 'Tamil Nadu / Kerala',
+    platform: 'Naukri',
+  },
+
+  // ── COACHING INSTITUTES — hiring student wellness / psychologist ───────────
+  {
+    q: 'site:naukri.com "student counsellor" OR "psychologist" "coaching institute" OR "coaching center" Hyderabad Kota 2025',
+    target_role: 'Centre Director / Academic Head',
+    type: 'coaching', region: 'South India / Rajasthan',
+    platform: 'Naukri',
   },
   {
-    q: 'residential boarding schools Hyderabad Pune Mumbai student mental health counselling 500+ students 2025',
-    target_role: 'Principal / Dean of Students',
-    type: 'school', region: 'South India / Maharashtra',
-  },
-  {
-    q: 'IIT JEE NEET coaching institute Hyderabad Chennai Bangalore student psychology anxiety wellness 2025',
+    q: 'site:linkedin.com/jobs "student wellness" OR "student counsellor" coaching institute Hyderabad Bangalore 2025',
     target_role: 'Centre Director / Academic Head',
     type: 'coaching', region: 'South India',
-  },
-  {
-    q: 'special education autism ADHD learning disability schools Bangalore Hyderabad Chennai 2025 psychologist',
-    target_role: 'Founder / Special Education Director',
-    type: 'school', region: 'South India',
-  },
-  {
-    q: 'Navodaya Vidyalaya Kendriya Vidyalaya Telangana Andhra Pradesh Karnataka school counsellor program',
-    target_role: 'Principal / Counselling Coordinator',
-    type: 'school', region: 'South India',
-  },
-  {
-    q: 'CBSE schools Delhi NCR Pune Mumbai student mental health wellbeing counsellor NEP 2020 2025',
-    target_role: 'Principal / Vice Principal',
-    type: 'school', region: 'North / West India',
+    platform: 'LinkedIn Jobs',
   },
 
-  // ── CORPORATES ──────────────────────────────────────────────────────────
+  // ── CORPORATES — hiring EAP / wellness / mental health counsellor ──────────
   {
-    q: 'site:linkedin.com/company IT companies Hyderabad HITEC City employee mental health EAP HR head 2025',
+    q: 'site:naukri.com "employee assistance program" OR "EAP counsellor" OR "employee wellness" Hyderabad 2025',
     target_role: 'HR Head / CHRO / People & Culture Head',
     type: 'corporate', region: 'Telangana',
+    platform: 'Naukri',
   },
   {
-    q: 'companies Hyderabad Bangalore employee assistance program EAP mental health wellbeing HR 2025',
-    target_role: 'HR Head / CHRO / Wellness Manager',
-    type: 'corporate', region: 'South India',
-  },
-  {
-    q: 'BPO call center Hyderabad Bangalore Chennai employee burnout mental health counsellor wellness 2025',
-    target_role: 'HR Director / People Operations Head',
-    type: 'corporate', region: 'South India',
-  },
-  {
-    q: 'hospitals healthcare organisations Hyderabad Bangalore nurse doctor mental health EAP program 2025',
-    target_role: 'HR Head / Medical Director',
-    type: 'corporate', region: 'South India',
-  },
-  {
-    q: 'GCC global capability centre Hyderabad Bangalore employee mental health EAP CHRO wellness 2025',
+    q: 'site:linkedin.com/jobs "employee wellness" OR "workplace mental health" OR "EAP" Hyderabad Bangalore 2025',
     target_role: 'CHRO / HR Director / Employee Experience Head',
     type: 'corporate', region: 'South India',
+    platform: 'LinkedIn Jobs',
   },
   {
-    q: 'pharmaceutical manufacturing company Hyderabad Genome Valley employee counselling EAP HR 2025',
-    target_role: 'HR Head / Plant HR Manager',
-    type: 'corporate', region: 'Telangana',
+    q: 'site:naukri.com "wellbeing manager" OR "mental health counsellor" corporate Bangalore Hyderabad Chennai 2025',
+    target_role: 'HR Head / Wellness Manager',
+    type: 'corporate', region: 'South India',
+    platform: 'Naukri',
   },
   {
-    q: 'companies Pune Mumbai Delhi NCR employee mental health EAP CHRO wellbeing initiative 2025',
+    q: 'site:shine.com "employee counsellor" OR "HR wellness" OR "workplace counsellor" Hyderabad Bangalore 2025',
+    target_role: 'HR Director / People Operations Head',
+    type: 'corporate', region: 'South India',
+    platform: 'Shine',
+  },
+  {
+    q: 'site:naukri.com "employee assistance" OR "EAP" counsellor IT company Hyderabad Bangalore Pune 2025',
+    target_role: 'CHRO / HR Head',
+    type: 'corporate', region: 'South India / Maharashtra',
+    platform: 'Naukri',
+  },
+  {
+    q: 'site:glassdoor.com "mental health counsellor" OR "employee wellness" job India 2025',
+    target_role: 'CHRO / HR Director',
+    type: 'corporate', region: 'All India',
+    platform: 'Glassdoor',
+  },
+  {
+    q: 'site:naukri.com "wellness coordinator" OR "wellbeing lead" hospital healthcare Hyderabad Bangalore 2025',
+    target_role: 'HR Head / Medical Director',
+    type: 'corporate', region: 'South India',
+    platform: 'Naukri',
+  },
+  {
+    q: 'site:linkedin.com/jobs "mental health" OR "EAP" OR "employee wellbeing" Pune Mumbai Delhi 2025',
     target_role: 'CHRO / HR Director / Wellness Lead',
     type: 'corporate', region: 'North / West India',
+    platform: 'LinkedIn Jobs',
   },
 
-  // ── CLINICS & NGOs ──────────────────────────────────────────────────────
+  // ── CLINICS & NGOs — hiring psychologist / therapist ─────────────────────
   {
-    q: 'site:practo.com OR site:justdial.com psychology clinic Hyderabad Bangalore Chennai psychologist 2025',
+    q: 'site:naukri.com "clinical psychologist" OR "counselling psychologist" clinic Hyderabad Bangalore Chennai 2025',
     target_role: 'Founder / Lead Psychologist / Clinical Director',
     type: 'clinic', region: 'South India',
+    platform: 'Naukri',
   },
   {
-    q: 'NGO mental health child welfare special education Hyderabad Telangana Andhra Pradesh 2025',
+    q: 'site:linkedin.com/jobs "psychologist" OR "therapist" NGO OR "non-profit" mental health Hyderabad Bangalore 2025',
     target_role: 'Programme Director / CEO / Founder',
     type: 'ngo', region: 'South India',
+    platform: 'LinkedIn Jobs',
   },
   {
-    q: 'rehabilitation centre disability special needs Hyderabad Bangalore Chennai therapist psychologist 2025',
+    q: 'site:naukri.com "occupational therapist" OR "special educator" rehabilitation centre Hyderabad Bangalore Chennai 2025',
     target_role: 'Centre Director / Head Therapist / Founder',
     type: 'rehab', region: 'South India',
+    platform: 'Naukri',
   },
   {
-    q: 'child psychology ADHD autism assessment therapy centre Hyderabad Bangalore Chennai Pune 2025',
+    q: 'site:naukri.com "child psychologist" OR "ADHD" OR "autism therapist" clinic centre Hyderabad Bangalore Pune 2025',
     target_role: 'Founder / Lead Psychologist',
     type: 'clinic', region: 'South India',
+    platform: 'Naukri',
+  },
+  {
+    q: 'site:indeed.com "psychologist" OR "mental health counsellor" NGO rehab clinic India 2025',
+    target_role: 'Founder / Programme Director',
+    type: 'clinic', region: 'All India',
+    platform: 'Indeed',
   },
 ];
 
 // ─── Prompts ──────────────────────────────────────────────────────────────────
 
 function buildSearchPrompt(queryObj) {
-  return `You are a verified B2B lead researcher for Cittaa Health Services — mental health & special education tech.
+  return `You are a B2B lead researcher for Cittaa Health Services — mental health & special education technology.
 
-SEARCH: "${queryObj.q}"
-REGION: ${queryObj.region}
-ROLE TO APPROACH: ${queryObj.target_role}
+Cittaa's insight: Any organisation ACTIVELY HIRING for a counsellor, psychologist, EAP manager, or wellness role is a HOT lead — they clearly need mental health support but are still building it manually. Cittaa's platform can scale and augment that.
 
-Use Google Search to find REAL organisations. For each verified org include:
-- Official name (as on their website)
-- Category: school / corporate / clinic / ngo / rehab / coaching
-- City, State (India)
-- Size (students or employees)
-- Decision-maker: name + title (${queryObj.target_role})
-- EMAIL: from official contact page, LinkedIn, JustDial
-- PHONE: from Google Maps, JustDial, official site
-- EXACT URL of page you verified them on (official website or directory listing)
-- Why they need Cittaa right now (specific gap: no counsellor, NEP compliance, EAP gap, burnout)
+SEARCH TASK: "${queryObj.q}"
+PLATFORM: ${queryObj.platform || 'Job platforms (Naukri, LinkedIn Jobs, Indeed, Shine, Glassdoor)'}
+REGION FOCUS: ${queryObj.region}
+DECISION-MAKER TO APPROACH: ${queryObj.target_role}
 
-STRICT RULES:
-- Only include orgs with a real verifiable URL
-- Skip any org you cannot find online
-- No made-up names
-- Priority region: ${queryObj.region}
-- Find 4-5 real verified organisations`;
+Using Google Search, find REAL active job postings matching this search. For each job posting found:
+1. Extract the HIRING COMPANY name (this is the lead)
+2. Find the company's official website
+3. Note the job title they are hiring for (proof they need Cittaa)
+4. Find the decision-maker who would have approved this hire: ${queryObj.target_role}
+5. Get their email/phone from LinkedIn company page, official website, JustDial, or Google Maps
+6. Get the DIRECT URL of the job posting (Naukri/LinkedIn/Indeed link) — this is the source_url
+
+For each verified lead report:
+- Company name (official)
+- Type: school / corporate / clinic / ngo / rehab / coaching
+- City, State
+- Size (approx students or employees)
+- Job title being hired (e.g. "School Counsellor", "EAP Counsellor", "Wellness Manager")
+- Decision-maker name + title (${queryObj.target_role}) if findable
+- Email + phone (from their official website or directory)
+- The job posting URL
+- Why this makes them a perfect Cittaa lead
+
+RULES:
+- Only real job postings — skip anything you cannot verify
+- The source_url MUST be the actual job post URL (naukri.com/..., linkedin.com/jobs/..., etc.)
+- Region priority: ${queryObj.region}
+- Find 4-5 real verified leads`;
 }
 
 function buildExtractionPrompt(searchText, queryObj) {
-  return `Extract verified B2B leads as a JSON array.
+  return `Extract B2B leads from these job posting search results as a JSON array.
 
-Research:
+Job postings found:
 """
 ${searchText}
 """
 
-Target role to approach: ${queryObj.target_role}
-Lead type: ${queryObj.type}
+CONTEXT: Each job posting = a company that needs Cittaa's mental health / special education tech.
+Platform searched: ${queryObj.platform || 'Job platforms'}
+Decision-maker to approach: ${queryObj.target_role}
 
 Types: "school" | "corporate" | "clinic" | "ngo" | "rehab" | "coaching"
 Annual value: school<500=150000, 500-2000=300000, 2000+=600000; corp200-500=250000, 500-2000=500000, 2000+=1200000; clinic/ngo/rehab=120000
 
-Return ONLY JSON array. Each item EXACTLY:
+Return ONLY a JSON array. Each item EXACTLY:
 {
-  "org_name": "official name",
+  "org_name": "hiring company official name",
   "type": "school|corporate|clinic|ngo|rehab|coaching",
   "city": "city",
   "state": "state",
-  "contact_name": "name or null",
-  "role": "their actual job title or null",
+  "job_title_hiring_for": "exact job title they posted (e.g. School Counsellor, EAP Manager)",
+  "contact_name": "decision-maker name or null",
+  "role": "contact's actual job title or null",
   "target_role": "${queryObj.target_role}",
   "email": "email or null",
   "phone": "phone or null",
   "employees_or_students": <number or null>,
   "estimated_annual_value_inr": <number>,
-  "why_good_lead": "specific reason they need Cittaa now",
-  "source_url": "actual URL verifying this org — mandatory",
+  "why_good_lead": "they are actively hiring for [job_title] — proof they need mental health support but building it manually; Cittaa can scale this",
+  "source_url": "direct URL of the job posting on Naukri/LinkedIn/Indeed/Shine — mandatory",
   "discovery_query": "${queryObj.q}"
 }
 
-RULES:
-- target_role MUST be "${queryObj.target_role}"
-- source_url is the real website/directory page
-- Start [, end ]. No markdown. If none: []`;
+CRITICAL:
+- source_url = the actual job post URL (e.g. naukri.com/job-listings/..., linkedin.com/jobs/view/...)
+- target_role always = "${queryObj.target_role}"
+- why_good_lead must mention the job title they're hiring for
+- Start [, end ]. No markdown. If no verified postings found: []`;
 }
 
 function buildScoringPrompt(lead) {
@@ -293,6 +338,7 @@ async function runQuery(queryObj) {
         contact_name: lead.contact_name || null,
         role: lead.role || null,
         target_role: lead.target_role || queryObj.target_role,
+        job_title_hiring_for: lead.job_title_hiring_for || null,
         email: lead.email || null,
         phone: lead.phone || null,
         employees_or_students: lead.employees_or_students || null,
@@ -302,7 +348,7 @@ async function runQuery(queryObj) {
         why_good_lead: lead.why_good_lead || null,
         source_url: lead.source_url || null,
         discovery_query: queryObj.q,
-        discovery_source: 'google_search',
+        discovery_source: queryObj.platform ? `${queryObj.platform} job posting` : 'google_search',
         status: 'pending',
         discovered_at: new Date(),
       });
