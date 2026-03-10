@@ -13,6 +13,7 @@ require('dotenv').config();
 const express  = require('express');
 const cors     = require('cors');
 const mongoose = require('mongoose');
+const path     = require('path');
 
 const app  = express();
 const PORT = process.env.PORT || 5001;
@@ -39,7 +40,16 @@ try { app.use('/api/stats',    require('./routes/stats'));    } catch (e) { cons
 try { app.use('/api/followups',require('./routes/followups')); } catch (e) { console.error('[Routes] followups:',e.message); }
 try { app.use('/api/compose',  require('./routes/compose'));  } catch (e) { console.error('[Routes] compose:',  e.message); }
 
-// ── 404 fallback ──────────────────────────────────────────────────────────
+// ── Serve React frontend (built by Railway during deploy) ────────────────
+const clientDist = path.join(__dirname, '..', 'client', 'dist');
+app.use(express.static(clientDist));
+
+// React Router catch-all — any non-API route serves index.html
+app.get('*', (req, res) => {
+  res.sendFile(path.join(clientDist, 'index.html'));
+});
+
+// ── 404 fallback (API routes only — won't reach here for frontend) ────────
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 
 // ── global error handler ──────────────────────────────────────────────────
