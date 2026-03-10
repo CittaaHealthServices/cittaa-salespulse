@@ -4,11 +4,12 @@ import { formatCurrency, formatRelative, scoreClass } from '../utils/helpers';
 import toast from 'react-hot-toast';
 import { Radar, Play, Check, X, Clock, RefreshCw } from 'lucide-react';
 
-const REVIEWER = 'S'; // Default reviewer — could be dynamic
+const REVIEWER = 'S';
 
-// ─── Target role fallback (mirrors server/services/emailService.js) ───────────
-function targetRoleLabel(lead) {
-  if (lead.role) return lead.role;
+// ─── Target role fallback ─────────────────────────────────────────────────────
+function getTargetRole(item) {
+  if (item.target_role) return item.target_role;
+  if (item.role) return item.role;
   const defaults = {
     school:    'Principal / Vice Principal / Counselling Coordinator',
     coaching:  'Centre Director / Academic Head',
@@ -17,17 +18,29 @@ function targetRoleLabel(lead) {
     ngo:       'Programme Director / CEO',
     rehab:     'Centre Director / Head Therapist',
   };
-  return defaults[lead.type] || 'Decision Maker';
+  return defaults[item.type] || 'Decision Maker';
 }
 
+// ─── Shorten URL for display ──────────────────────────────────────────────────
+function shortUrl(url) {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    return u.hostname.replace('www.', '');
+  } catch { return url.slice(0, 40); }
+}
+
+// ─── Type badge colour ────────────────────────────────────────────────────────
+const TYPE_EMOJI = { school:'🏫', coaching:'📚', corporate:'🏢', clinic:'🧠', ngo:'🤝', rehab:'♿' };
+
 export default function LeadRadar() {
-  const [queue, setQueue] = useState([]);
-  const [logs, setLogs] = useState([]);
-  const [stats, setStats] = useState({});
-  const [tab, setTab] = useState('pending');
-  const [loading, setLoading] = useState(true);
+  const [queue, setQueue]         = useState([]);
+  const [logs, setLogs]           = useState([]);
+  const [stats, setStats]         = useState({});
+  const [tab, setTab]             = useState('pending');
+  const [loading, setLoading]     = useState(true);
   const [triggering, setTriggering] = useState(false);
-  const [total, setTotal] = useState(0);
+  const [total, setTotal]         = useState(0);
 
   const load = async () => {
     try {
@@ -50,248 +63,192 @@ export default function LeadRadar() {
   const handleApprove = async (id) => {
     try {
       await approveQueueItem(id, REVIEWER);
-      toast.success('✅ Approved! Lead added to Lead Hub');
-      setQueue((q) => q.filter((item) => item._id !== id));
+      toast.success('Lead approved & moved to Lead Hub!');
+      load();
     } catch (e) { toast.error(e.message); }
   };
 
   const handleReject = async (id) => {
     try {
       await rejectQueueItem(id, REVIEWER);
-      toast.success('Rejected');
-      setQueue((q) => q.filter((item) => item._id !== id));
+      toast.success('Lead rejected');
+      load();
     } catch (e) { toast.error(e.message); }
   };
 
-  const handleRunNow = async () => {
+  const handleTrigger = async () => {
     setTriggering(true);
     try {
       await triggerDiscovery();
-      toast.success('🔍 Discovery job triggered! Check back in ~2 minutes.');
-      setTimeout(load, 3000);
+      toast.success('Discovery started! New leads will appear in a few minutes.');
     } catch (e) { toast.error(e.message); }
     finally { setTimeout(() => setTriggering(false), 3000); }
   };
 
   return (
-    <div className="page">
+    <div style={{ maxWidth: 900, margin: '0 auto', padding: '0 0 60px 0' }}>
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <Radar size={26} style={{ color: 'var(--teal)' }} />
-            Lead Radar
-          </h1>
-          <p className="text-muted text-sm mt-1">
-            Auto-discovered leads from Gemini + Google Search · runs every 6 hours
-          </p>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <Radar size={28} color="var(--purple)" />
+          <div>
+            <h1 style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--ink)', margin: 0 }}>Lead Radar</h1>
+            <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: 0 }}>AI-discovered leads • South India + All India</p>
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 10 }}>
-          <button className="btn btn-ghost btn-sm" onClick={load}><RefreshCw size={14} /> Refresh</button>
-          <button className="btn btn-primary" onClick={handleRunNow} disabled={triggering}>
-            <Play size={14} /> {triggering ? 'Triggered…' : 'Run Discovery Now'}
-          </button>
-        </div>
+        <button className="btn btn-primary" onClick={handleTrigger} disabled={triggering}
+          style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {triggering ? <RefreshCw size={16} className="spin" /> : <Play size={16} />}
+          {triggering ? 'Scanning...' : 'Run Scan Now'}
+        </button>
       </div>
 
-      {/* Stats Bar */}
-      <div style={{
-        background: 'white', border: '1.5px solid var(--border)', borderRadius: 12,
-        padding: '14px 20px', marginBottom: 24,
-        display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'center',
-      }}>
-        <StatChip label="Pending Queue" value={stats.pending || 0} color="var(--purple)" emoji="⏳" />
-        <div style={{ width: 1, height: 28, background: 'var(--border)' }} />
-        <StatChip label="Approved This Week" value={stats.approvedThisWeek || 0} color="var(--green)" emoji="✅" />
-        <div style={{ width: 1, height: 28, background: 'var(--border)' }} />
-        <StatChip label="Rejected" value={stats.rejectedThisWeek || 0} color="var(--red)" emoji="✗" />
-        <div style={{ width: 1, height: 28, background: 'var(--border)' }} />
-        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-          <Clock size={13} style={{ display: 'inline', marginRight: 5 }} />
-          Last run: {stats.lastRun ? formatRelative(stats.lastRun) : 'Never'}
-        </div>
+      {/* Stats */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 24 }}>
+        {[
+          { label: 'Pending Review', value: stats.pending ?? '—', color: '#f59e0b' },
+          { label: 'Approved', value: stats.approved ?? '—', color: '#16a34a' },
+          { label: 'Rejected', value: stats.rejected ?? '—', color: '#dc2626' },
+        ].map(s => (
+          <div key={s.label} className="card" style={{ textAlign: 'center', padding: '14px 10px' }}>
+            <div style={{ fontSize: '1.8rem', fontWeight: 800, color: s.color }}>{s.value}</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>{s.label}</div>
+          </div>
+        ))}
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 20, background: 'var(--mist)', padding: 4, borderRadius: 10, width: 'fit-content' }}>
-        {['pending', 'approved', 'rejected'].map((t) => (
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+        {['pending', 'approved', 'rejected'].map(t => (
           <button key={t} onClick={() => setTab(t)}
-            style={{
-              padding: '7px 18px', borderRadius: 7, border: 'none', cursor: 'pointer',
-              fontFamily: 'inherit', fontSize: '0.85rem', fontWeight: 600,
-              background: tab === t ? 'white' : 'transparent',
-              color: tab === t ? 'var(--ink)' : 'var(--text-muted)',
-              boxShadow: tab === t ? 'var(--shadow-sm)' : 'none',
-              transition: 'all 0.15s',
-            }}>
-            {t.charAt(0).toUpperCase() + t.slice(1)}
-            {t === 'pending' && (stats.pending || 0) > 0 && (
-              <span style={{
-                marginLeft: 6, background: 'var(--purple)', color: 'white',
-                borderRadius: 10, padding: '0 6px', fontSize: '0.7rem', fontWeight: 700,
-              }}>{stats.pending}</span>
-            )}
+            className={tab === t ? 'btn btn-primary' : 'btn btn-ghost'}
+            style={{ textTransform: 'capitalize', fontSize: '0.85rem' }}>
+            {t}
           </button>
         ))}
       </div>
 
-      {/* Queue grid */}
+      {/* Queue */}
       {loading ? (
-        <div style={{ display: 'flex', gap: 12, paddingTop: 32 }}><div className="spinner" /> <span className="text-muted">Loading…</span></div>
+        <div style={{ textAlign: 'center', padding: 60 }}><div className="spinner" style={{ margin: '0 auto' }} /></div>
       ) : queue.length === 0 ? (
-        <div className="card" style={{ textAlign: 'center', padding: 64 }}>
-          <Radar size={44} style={{ color: 'var(--border)', marginBottom: 16 }} />
-          <h3 style={{ color: 'var(--text-muted)', fontWeight: 500 }}>
-            {tab === 'pending' ? 'No pending leads in queue' : `No ${tab} leads`}
-          </h3>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 8 }}>
-            {tab === 'pending' ? 'Click "Run Discovery Now" or wait for the automatic 6-hour scan.' : ''}
-          </p>
+        <div className="card" style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>
+          <Radar size={40} style={{ marginBottom: 12, opacity: 0.3 }} />
+          <p>{tab === 'pending' ? 'No pending leads. Click "Run Scan Now" to discover new leads.' : `No ${tab} leads yet.`}</p>
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 16, marginBottom: 32 }}>
-          {queue.map((item) => (
-            <QueueCard
-              key={item._id}
-              item={item}
-              showActions={tab === 'pending'}
-              onApprove={handleApprove}
-              onReject={handleReject}
-            />
-          ))}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {queue.map(item => <RadarCard key={item._id} item={item} showActions={tab === 'pending'} onApprove={handleApprove} onReject={handleReject} />)}
         </div>
       )}
-
-      {/* Discovery Logs */}
-      <div className="card">
-        <h3 style={{ marginBottom: 16 }}>Discovery Run History</h3>
-        {logs.length === 0 ? (
-          <p className="text-muted text-sm">No discovery runs yet. Click "Run Discovery Now" to start.</p>
-        ) : (
-          <div className="table-wrapper" style={{ border: 'none' }}>
-            <table>
-              <thead>
-                <tr>
-                  <th>Run Time</th>
-                  <th>Queries</th>
-                  <th>Found</th>
-                  <th>Added to Queue</th>
-                  <th>Duplicates Skipped</th>
-                  <th>Duration</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {logs.map((log) => (
-                  <tr key={log._id}>
-                    <td style={{ fontSize: '0.8rem' }}>{new Date(log.run_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}</td>
-                    <td>{log.queries_run?.length || 0}</td>
-                    <td>{log.leads_found || 0}</td>
-                    <td style={{ fontWeight: 600, color: 'var(--teal)' }}>{log.leads_added_to_queue || 0}</td>
-                    <td className="text-muted">{log.duplicates_skipped || 0}</td>
-                    <td className="text-muted">{log.duration_seconds ? `${log.duration_seconds}s` : '—'}</td>
-                    <td>
-                      <span style={{
-                        display: 'inline-block', padding: '2px 9px', borderRadius: 20,
-                        fontSize: '0.72rem', fontWeight: 700,
-                        background: log.status === 'success' ? '#e8f5e9' : log.status === 'failed' ? '#fce4ec' : '#fff8e1',
-                        color: log.status === 'success' ? '#2e7d32' : log.status === 'failed' ? '#c62828' : '#c77700',
-                      }}>
-                        {log.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
     </div>
   );
 }
 
-function QueueCard({ item, showActions, onApprove, onReject }) {
-  const scoreColor = item.ai_score >= 70 ? '#2e7d32' : item.ai_score >= 45 ? '#c77700' : '#c62828';
-  const scoreBg = item.ai_score >= 70 ? '#e8f5e9' : item.ai_score >= 45 ? '#fff8e1' : '#fce4ec';
+// ─── Radar Card ───────────────────────────────────────────────────────────────
+function RadarCard({ item, showActions, onApprove, onReject }) {
+  const emoji = TYPE_EMOJI[item.type] || '🏢';
+  const targetRole = getTargetRole(item);
+  const sourceHost = shortUrl(item.source_url);
 
   return (
-    <div className="card" style={{ position: 'relative', overflow: 'hidden' }}>
-      {/* Score ribbon */}
+    <div className="card" style={{ position: 'relative', padding: '18px 20px' }}>
+      {/* Score badge */}
       <div style={{
-        position: 'absolute', top: 12, right: 12,
-        background: scoreBg, color: scoreColor,
-        borderRadius: 20, padding: '3px 10px', fontWeight: 800,
-        fontSize: '0.85rem', fontFamily: 'DM Mono, monospace',
+        position: 'absolute', top: 14, right: 16,
+        background: item.ai_score >= 70 ? '#22c55e' : item.ai_score >= 45 ? '#f59e0b' : '#ef4444',
+        color: '#fff', borderRadius: 20, padding: '3px 10px',
+        fontSize: '0.78rem', fontWeight: 700,
       }}>
-        {item.ai_score}
+        {item.ai_score}/100
       </div>
 
-      {/* Type badge */}
-      <span className={`badge badge-${item.type}`} style={{ marginBottom: 10, display: 'inline-block' }}>{item.type}</span>
-
-      {/* Org name */}
-      <div style={{ fontWeight: 700, fontSize: '1rem', marginBottom: 4, paddingRight: 48 }}>{item.org_name}</div>
-
-      {/* Location + size */}
-      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 8 }}>
-        📍 {item.city || '—'}{item.state ? `, ${item.state}` : ''}
+      {/* Org name + type */}
+      <div style={{ fontWeight: 800, fontSize: '1.05rem', marginBottom: 2, paddingRight: 60, color: 'var(--ink)' }}>
+        {emoji} {item.org_name}
+      </div>
+      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: 10 }}>
+        <span style={{ textTransform: 'capitalize', fontWeight: 600 }}>{item.type}</span>
+        {item.city && <span> · 📍 {item.city}{item.state ? `, ${item.state}` : ''}</span>}
         {item.employees_or_students && (
-          <span style={{ marginLeft: 10 }}>
-            👥 {item.employees_or_students.toLocaleString()} {item.type === 'school' ? 'students' : 'employees'}
-          </span>
+          <span> · 👥 {item.employees_or_students.toLocaleString('en-IN')} {item.type === 'school' ? 'students' : 'employees'}</span>
         )}
       </div>
 
-      {/* Target Role for Outreach — always shown */}
+      {/* ── TARGET ROLE ── always shown */}
       <div style={{
-        background: 'var(--mist)', border: '1px solid var(--purple-light, #e9e0ff)',
-        borderLeft: '3px solid var(--purple)', borderRadius: 6,
-        padding: '7px 10px', marginBottom: 8, fontSize: '0.8rem',
+        background: '#f4f0fd', borderLeft: '3px solid var(--purple)',
+        borderRadius: '0 6px 6px 0', padding: '8px 12px', marginBottom: 8,
       }}>
-        <span style={{ color: 'var(--purple)', fontWeight: 700, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
-          🎯 Target Role for Outreach
-        </span>
-        <div style={{ fontWeight: 600, color: 'var(--ink)', marginTop: 2 }}>
-          {targetRoleLabel(item)}
+        <div style={{ fontSize: '0.68rem', color: 'var(--purple)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+          🎯 Role to Approach
+        </div>
+        <div style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--ink)', marginTop: 2 }}>
+          {targetRole}
         </div>
         {item.contact_name && (
-          <div style={{ marginTop: 3, color: 'var(--text-muted)' }}>
-            👤 {item.contact_name}{item.role ? ` · ${item.role}` : ''}
+          <div style={{ fontSize: '0.78rem', color: '#555', marginTop: 3 }}>
+            👤 Found: {item.contact_name}{item.role && item.role !== item.target_role ? ` · ${item.role}` : ''}
           </div>
         )}
-        {item.email && (
-          <div style={{ marginTop: 2, color: 'var(--text-muted)' }}>📧 {item.email}</div>
-        )}
-        {item.phone && (
-          <div style={{ marginTop: 2, color: 'var(--text-muted)' }}>📞 {item.phone}</div>
-        )}
+        {item.email && <div style={{ fontSize: '0.78rem', color: '#555', marginTop: 1 }}>📧 {item.email}</div>}
+        {item.phone && <div style={{ fontSize: '0.78rem', color: '#555', marginTop: 1 }}>📞 {item.phone}</div>}
       </div>
 
-      {/* Estimated value */}
-      {item.estimated_value > 0 && (
-        <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--purple)', marginBottom: 10 }}>
-          💰 Est. {formatCurrency(item.estimated_value)} / year
+      {/* ── SOURCE WEBSITE ── */}
+      {(item.source_url || item.discovery_query) && (
+        <div style={{
+          background: '#f0faf7', borderLeft: '3px solid var(--teal, #0d9488)',
+          borderRadius: '0 6px 6px 0', padding: '7px 12px', marginBottom: 8,
+        }}>
+          {item.source_url && (
+            <div style={{ fontSize: '0.75rem', marginBottom: item.discovery_query ? 3 : 0 }}>
+              <span style={{ color: 'var(--teal, #0d9488)', fontWeight: 700, textTransform: 'uppercase', fontSize: '0.65rem', letterSpacing: '0.5px' }}>
+                🌐 Found on
+              </span>
+              {' '}
+              <a href={item.source_url} target="_blank" rel="noreferrer"
+                style={{ color: 'var(--teal, #0d9488)', fontWeight: 600, textDecoration: 'underline' }}>
+                {sourceHost}
+              </a>
+            </div>
+          )}
+          {item.discovery_query && (
+            <div style={{ fontSize: '0.72rem', color: '#555' }}>
+              <span style={{ color: 'var(--teal, #0d9488)', fontWeight: 700, textTransform: 'uppercase', fontSize: '0.65rem', letterSpacing: '0.5px' }}>
+                🔍 Search used
+              </span>
+              {' '}
+              <span style={{ fontStyle: 'italic', color: '#666' }}>
+                "{item.discovery_query.slice(0, 80)}{item.discovery_query.length > 80 ? '…' : ''}"
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Why a lead */}
+      {item.why_good_lead && (
+        <div style={{
+          background: 'var(--mist)', borderRadius: 6, padding: '8px 11px',
+          fontSize: '0.79rem', color: 'var(--ink)', marginBottom: 10, lineHeight: 1.5,
+        }}>
+          ✨ {item.why_good_lead}
         </div>
       )}
 
       {/* AI Reasoning */}
       {item.ai_reasoning && (
-        <div style={{
-          background: 'var(--mist)', borderRadius: 8, padding: '9px 11px',
-          fontSize: '0.79rem', color: 'var(--ink)', marginBottom: 12, lineHeight: 1.5,
-          borderLeft: '3px solid var(--purple)',
-        }}>
-          ✨ {item.ai_reasoning}
+        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 10, fontStyle: 'italic' }}>
+          AI: {item.ai_reasoning}
         </div>
       )}
 
-      {/* Source */}
-      {item.source_url && (
-        <a href={item.source_url} target="_blank" rel="noreferrer"
-          style={{ fontSize: '0.72rem', color: 'var(--teal)', display: 'block', marginBottom: 12, textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          🔗 {item.source_url}
-        </a>
+      {/* Est. value */}
+      {item.estimated_value > 0 && (
+        <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--purple)', marginBottom: 10 }}>
+          💰 Est. {formatCurrency(item.estimated_value)} / year
+        </div>
       )}
 
       <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: showActions ? 14 : 0 }}>
@@ -299,29 +256,16 @@ function QueueCard({ item, showActions, onApprove, onReject }) {
         {item.status !== 'pending' && ` · ${item.status} by ${item.reviewed_by}`}
       </div>
 
-      {/* Action buttons */}
       {showActions && (
         <div style={{ display: 'flex', gap: 10 }}>
           <button className="btn btn-success" style={{ flex: 1 }} onClick={() => onApprove(item._id)}>
-            <Check size={15} /> Approve
+            <Check size={15} /> Approve → Lead Hub
           </button>
           <button className="btn btn-danger" style={{ flex: 1 }} onClick={() => onReject(item._id)}>
             <X size={15} /> Reject
           </button>
         </div>
       )}
-    </div>
-  );
-}
-
-function StatChip({ label, value, color, emoji }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <span style={{ fontSize: '1rem' }}>{emoji}</span>
-      <div>
-        <div style={{ fontSize: '1.2rem', fontWeight: 800, color, lineHeight: 1 }}>{value}</div>
-        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{label}</div>
-      </div>
     </div>
   );
 }

@@ -8,462 +8,352 @@ const levenshtein = require('fast-levenshtein');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// ─── Discovery Queries ────────────────────────────────────────────────────────
-// Tightly focused on: psychology, mental health, special education, student
-// wellbeing, and corporate EAP/wellness — Cittaa's exact domain
+// ─── Query Bank ───────────────────────────────────────────────────────────────
+// Each query tagged: target_role (who to approach), type, region
+// South India = Telangana, AP, Karnataka, Tamil Nadu, Kerala — priority
+// All India coverage included
 
-// ── SCHOOL / EDUCATION queries ────────────────────────────────────────────────
-// Targets schools that NEED a counsellor (no program yet) or are scaling one
+const QUERIES = [
+  // ── SCHOOLS / COACHING ──────────────────────────────────────────────────
+  {
+    q: 'site:schoolmykids.com OR site:cbse.gov.in CBSE schools Hyderabad Telangana student counsellor mental health 2025',
+    target_role: 'Principal / Vice Principal',
+    type: 'school', region: 'Telangana',
+  },
+  {
+    q: 'site:justdial.com special education autism ADHD school Hyderabad Secunderabad contact principal phone',
+    target_role: 'Principal / Special Education Coordinator',
+    type: 'school', region: 'Telangana',
+  },
+  {
+    q: 'CBSE ICSE schools Bangalore Karnataka NEP 2020 student wellbeing counsellor vacancy 2025',
+    target_role: 'Principal / Counselling Coordinator',
+    type: 'school', region: 'Karnataka',
+  },
+  {
+    q: 'schools Chennai Tamil Nadu student mental health counsellor CBSE ICSE 2025 special education',
+    target_role: 'Principal / Vice Principal',
+    type: 'school', region: 'Tamil Nadu',
+  },
+  {
+    q: 'schools Kerala Kochi Trivandrum student wellbeing counsellor NEP 2020 mental health program',
+    target_role: 'Principal / Counselling Head',
+    type: 'school', region: 'Kerala',
+  },
+  {
+    q: 'residential boarding schools Hyderabad Pune Mumbai student mental health counselling 500+ students 2025',
+    target_role: 'Principal / Dean of Students',
+    type: 'school', region: 'South India / Maharashtra',
+  },
+  {
+    q: 'IIT JEE NEET coaching institute Hyderabad Chennai Bangalore student psychology anxiety wellness 2025',
+    target_role: 'Centre Director / Academic Head',
+    type: 'coaching', region: 'South India',
+  },
+  {
+    q: 'special education autism ADHD learning disability schools Bangalore Hyderabad Chennai 2025 psychologist',
+    target_role: 'Founder / Special Education Director',
+    type: 'school', region: 'South India',
+  },
+  {
+    q: 'Navodaya Vidyalaya Kendriya Vidyalaya Telangana Andhra Pradesh Karnataka school counsellor program',
+    target_role: 'Principal / Counselling Coordinator',
+    type: 'school', region: 'South India',
+  },
+  {
+    q: 'CBSE schools Delhi NCR Pune Mumbai student mental health wellbeing counsellor NEP 2020 2025',
+    target_role: 'Principal / Vice Principal',
+    type: 'school', region: 'North / West India',
+  },
 
-const SCHOOL_QUERIES = [
-  // Schools actively seeking mental health support
-  'schools Hyderabad Telangana hiring school counsellor psychologist 2025 mental health vacancy',
-  'CBSE ICSE schools Hyderabad student mental health wellbeing program NEP 2020 compliance',
+  // ── CORPORATES ──────────────────────────────────────────────────────────
+  {
+    q: 'site:linkedin.com/company IT companies Hyderabad HITEC City employee mental health EAP HR head 2025',
+    target_role: 'HR Head / CHRO / People & Culture Head',
+    type: 'corporate', region: 'Telangana',
+  },
+  {
+    q: 'companies Hyderabad Bangalore employee assistance program EAP mental health wellbeing HR 2025',
+    target_role: 'HR Head / CHRO / Wellness Manager',
+    type: 'corporate', region: 'South India',
+  },
+  {
+    q: 'BPO call center Hyderabad Bangalore Chennai employee burnout mental health counsellor wellness 2025',
+    target_role: 'HR Director / People Operations Head',
+    type: 'corporate', region: 'South India',
+  },
+  {
+    q: 'hospitals healthcare organisations Hyderabad Bangalore nurse doctor mental health EAP program 2025',
+    target_role: 'HR Head / Medical Director',
+    type: 'corporate', region: 'South India',
+  },
+  {
+    q: 'GCC global capability centre Hyderabad Bangalore employee mental health EAP CHRO wellness 2025',
+    target_role: 'CHRO / HR Director / Employee Experience Head',
+    type: 'corporate', region: 'South India',
+  },
+  {
+    q: 'pharmaceutical manufacturing company Hyderabad Genome Valley employee counselling EAP HR 2025',
+    target_role: 'HR Head / Plant HR Manager',
+    type: 'corporate', region: 'Telangana',
+  },
+  {
+    q: 'companies Pune Mumbai Delhi NCR employee mental health EAP CHRO wellbeing initiative 2025',
+    target_role: 'CHRO / HR Director / Wellness Lead',
+    type: 'corporate', region: 'North / West India',
+  },
 
-  // Special education — core Cittaa target segment
-  'special education schools Hyderabad Telangana autism ADHD learning disability centre 2025',
-  'inclusive education schools Hyderabad special needs students psychologist support',
-  'schools Hyderabad Secunderabad special educator child psychologist contact principal',
-
-  // Residential / boarding — high-stress environment, strong ROI for Cittaa
-  'residential boarding schools Hyderabad Telangana 500+ students student counselling',
-  'Navodaya Vidyalaya KV Kendriya Vidyalaya Hyderabad Telangana school psychologist program',
-
-  // Stress / exam pressure — pain point Cittaa directly addresses
-  'schools Hyderabad student anxiety exam stress mental health counselling program 2025',
-  'IIT JEE NEET coaching institutes Hyderabad student psychology wellness mental health',
-
-  // Child psychology referral network
-  'child psychology centre Hyderabad Telangana ADHD autism assessment therapy contact',
-
-  // Schools in growth corridors — likely scaling, no counsellor yet
-  'new CBSE schools Hyderabad Kompally Bachupally Kokapet Shadnagar 2024 2025 admissions',
-
-  // Play therapy / early childhood
-  'preschool montessori early childhood development centre Hyderabad psychologist wellness',
+  // ── CLINICS & NGOs ──────────────────────────────────────────────────────
+  {
+    q: 'site:practo.com OR site:justdial.com psychology clinic Hyderabad Bangalore Chennai psychologist 2025',
+    target_role: 'Founder / Lead Psychologist / Clinical Director',
+    type: 'clinic', region: 'South India',
+  },
+  {
+    q: 'NGO mental health child welfare special education Hyderabad Telangana Andhra Pradesh 2025',
+    target_role: 'Programme Director / CEO / Founder',
+    type: 'ngo', region: 'South India',
+  },
+  {
+    q: 'rehabilitation centre disability special needs Hyderabad Bangalore Chennai therapist psychologist 2025',
+    target_role: 'Centre Director / Head Therapist / Founder',
+    type: 'rehab', region: 'South India',
+  },
+  {
+    q: 'child psychology ADHD autism assessment therapy centre Hyderabad Bangalore Chennai Pune 2025',
+    target_role: 'Founder / Lead Psychologist',
+    type: 'clinic', region: 'South India',
+  },
 ];
 
-// ── CORPORATE / ORGANISATION queries ─────────────────────────────────────────
-// Targets organisations with high-stress workforces and no EAP yet
+// ─── Prompts ──────────────────────────────────────────────────────────────────
 
-const CORP_QUERIES = [
-  // Direct EAP / employee mental health search
-  'companies Hyderabad implementing employee assistance program EAP mental health 2025',
-  'corporates Hyderabad hiring workplace mental health counsellor wellbeing manager 2025',
+function buildSearchPrompt(queryObj) {
+  return `You are a verified B2B lead researcher for Cittaa Health Services — mental health & special education tech.
 
-  // High-burnout sectors — IT, BPO, healthcare workers
-  'IT BPO companies Hyderabad employee burnout stress mental health support program',
-  'hospitals healthcare organisations Hyderabad nurse doctor mental health wellbeing program',
+SEARCH: "${queryObj.q}"
+REGION: ${queryObj.region}
+ROLE TO APPROACH: ${queryObj.target_role}
 
-  // NGOs and social sector — mental health mission alignment
-  'NGOs Hyderabad Telangana mental health psychology child welfare special education',
-  'disability rehabilitation centres Hyderabad psychologist occupational therapist contact',
+Use Google Search to find REAL organisations. For each verified org include:
+- Official name (as on their website)
+- Category: school / corporate / clinic / ngo / rehab / coaching
+- City, State (India)
+- Size (students or employees)
+- Decision-maker: name + title (${queryObj.target_role})
+- EMAIL: from official contact page, LinkedIn, JustDial
+- PHONE: from Google Maps, JustDial, official site
+- EXACT URL of page you verified them on (official website or directory listing)
+- Why they need Cittaa right now (specific gap: no counsellor, NEP compliance, EAP gap, burnout)
 
-  // Psychology clinics and networks — potential referral / partnership leads
-  'clinical psychology practice Hyderabad psychologist psychiatrist clinic private 2025',
-  'mental health startups Hyderabad Telangana psychology app platform wellness 2025',
-
-  // Corporate wellness mandates — post-COVID push
-  'Telangana companies won mental health wellbeing award employee wellness initiative 2024 2025',
-  'GCC global capability centres Hyderabad employee mental health EAP program HR head',
-
-  // Pharma and manufacturing — shift workers, high-stress
-  'pharmaceutical manufacturing companies Hyderabad Genome Valley employee counselling EAP',
-
-  // Govt / PSU — new mandates
-  'government PSU organisations Hyderabad Telangana employee mental health wellness initiative',
-];
-
-// ─── Step 1: Search prompt (grounded — returns descriptive text) ──────────────
-
-function buildSearchPrompt(query) {
-  return `You are a B2B sales research assistant for Cittaa Health Services.
-
-Cittaa provides AI-powered mental health and wellbeing technology to:
-- Schools: student mental health assessments, counsellor dashboards, NEP 2020 compliance, special education support
-- Corporates: employee mental health (EAP), burnout prevention, anonymous check-ins, manager dashboards
-- Clinics / NGOs: psychology platform, assessment tools, therapy management
-
-Using Google Search, find real organisations matching: "${query}"
-
-Write a detailed research report. For each organisation found include:
-- Full organisation name
-- Category (school / corporate / clinic / NGO / rehab centre / coaching institute)
-- City and state in India
-- Approximate size (students or employees or patients served)
-- Decision-maker contact: name + title (Principal / HR Head / Director / Founder / CHRO)
-- EMAIL address — check official website, LinkedIn, JustDial, IndiaMART, Google Maps listing
-- PHONE number — check Google Maps, JustDial, official website contact page
-- Specific reason this org needs Cittaa (e.g. no counsellor, NEP gap, high burnout, special ed students)
-
-IMPORTANT: Always try to find email and phone. Check the official website contact page, Google Maps listing, and JustDial profile.
-- Specific reason this org needs Cittaa's mental health platform (e.g. no counsellor, high burnout, NEP compliance gap, special ed students, etc.)
-
-Prioritise Hyderabad and Telangana. List up to 5 real organisations. Use specific names, not generic examples.`;
+STRICT RULES:
+- Only include orgs with a real verifiable URL
+- Skip any org you cannot find online
+- No made-up names
+- Priority region: ${queryObj.region}
+- Find 4-5 real verified organisations`;
 }
 
-// ─── Step 2: Extraction prompt (no grounding — converts text to JSON) ─────────
+function buildExtractionPrompt(searchText, queryObj) {
+  return `Extract verified B2B leads as a JSON array.
 
-function buildExtractionPrompt(searchText, query) {
-  return `Extract organisations from the research report below as a JSON array.
-
-Research report:
+Research:
 """
 ${searchText}
 """
 
-Cittaa Health Services sells mental health + special education technology to:
-- Schools (student counselling, NEP compliance, special ed)
-- Corporates (employee EAP, burnout prevention)
-- Clinics, NGOs, rehab centres, coaching institutes (psychology platform)
+Target role to approach: ${queryObj.target_role}
+Lead type: ${queryObj.type}
 
-For the "type" field use one of: "school", "corporate", "clinic", "ngo", "rehab", "coaching"
-For estimated_annual_value_inr, estimate what Cittaa could charge annually:
-  - Small school (<500 students): 150000
-  - Medium school (500-2000): 300000
-  - Large school (2000+): 600000
-  - Corporate 200-500 employees: 250000
-  - Corporate 500-2000: 500000
-  - Corporate 2000+: 1200000
-  - Clinic/NGO/Rehab: 120000
+Types: "school" | "corporate" | "clinic" | "ngo" | "rehab" | "coaching"
+Annual value: school<500=150000, 500-2000=300000, 2000+=600000; corp200-500=250000, 500-2000=500000, 2000+=1200000; clinic/ngo/rehab=120000
 
-Return a JSON array. Each item must have EXACTLY these fields:
+Return ONLY JSON array. Each item EXACTLY:
 {
-  "org_name": "full organisation name",
+  "org_name": "official name",
   "type": "school|corporate|clinic|ngo|rehab|coaching",
   "city": "city",
   "state": "state",
   "contact_name": "name or null",
-  "role": "Principal/HR Head/Director/Founder etc or null",
+  "role": "their actual job title or null",
+  "target_role": "${queryObj.target_role}",
   "email": "email or null",
   "phone": "phone or null",
-  "employees_or_students": <integer or null>,
-  "estimated_annual_value_inr": <integer>,
-  "why_good_lead": "specific one-sentence reason they need Cittaa (e.g. no counsellor, NEP gap, high burnout)",
-  "source_url": "URL or null"
+  "employees_or_students": <number or null>,
+  "estimated_annual_value_inr": <number>,
+  "why_good_lead": "specific reason they need Cittaa now",
+  "source_url": "actual URL verifying this org — mandatory",
+  "discovery_query": "${queryObj.q}"
 }
 
-CRITICAL: Respond with ONLY the JSON array. Start with [ end with ]. No markdown, no explanation. If nothing found: []`;
+RULES:
+- target_role MUST be "${queryObj.target_role}"
+- source_url is the real website/directory page
+- Start [, end ]. No markdown. If none: []`;
 }
-
-// ─── Scoring prompt ───────────────────────────────────────────────────────────
 
 function buildScoringPrompt(lead) {
-  return `Score this lead for Cittaa Health Services — a mental health & special education technology company (0–100).
+  return `Score this B2B lead for Cittaa Health Services (0-100).
 
-Lead: ${lead.type} — ${lead.org_name}, ${lead.city || 'India'}
-Size: ${lead.employees_or_students || 'unknown'}
-Est. contract: ₹${lead.estimated_annual_value_inr || 0}
-Contact found: ${lead.contact_name ? `yes — ${lead.contact_name} (${lead.role || ''})` : 'no'}
-Email available: ${lead.email ? 'yes' : 'no'}
-Phone available: ${lead.phone ? 'yes' : 'no'}
-Why a lead: ${lead.why_good_lead || 'unknown'}
+${lead.type} — ${lead.org_name}, ${lead.city}, ${lead.state}
+Size: ${lead.employees_or_students || 'unknown'} | Contract: Rs.${lead.estimated_annual_value_inr || 0}
+Target role: ${lead.target_role} | Contact: ${lead.contact_name || 'none'}
+Email: ${lead.email ? 'yes' : 'no'} | Phone: ${lead.phone ? 'yes' : 'no'}
+Source: ${lead.source_url ? 'verified' : 'unverified'}
+Reason: ${lead.why_good_lead || 'unknown'}
 
-Scoring criteria:
-+25 Hyderabad/Telangana based (priority market)
-+15 special education / autism / ADHD / learning disability focus (core Cittaa segment)
-+15 explicitly no counsellor or seeking mental health support
-+10 large institution (2000+ students or 500+ employees)
-+10 high value (₹5L+ contract)
-+10 decision-maker email OR phone found
-+5 decision-maker name + role found
--15 outside Telangana / Andhra Pradesh
--20 no mental health / wellbeing relevance
+Scoring:
++30 South India (Telangana/AP/Karnataka/Tamil Nadu/Kerala)
++15 special ed / autism / ADHD
++15 no counsellor / actively seeking MH support
++10 large (2000+ students or 500+ employees)
++10 high value (Rs.5L+)
++10 verified source URL
++5 email or phone found
++5 contact name found
+-10 outside South India
+-20 irrelevant to mental health
 
-Respond with ONLY: {"score": <0-100>, "reasoning": "<one sentence explaining score>"}`;
+Respond ONLY: {"score": <0-100>, "reasoning": "<one sentence>"}`;
 }
 
-// ─── JSON parsers (multi-strategy) ───────────────────────────────────────────
+// ─── Parsers ──────────────────────────────────────────────────────────────────
 
 function parseLeadsFromResponse(text) {
-  if (!text || typeof text !== 'string') return [];
-
-  // Strip Gemini thinking tags if present
-  const noThinking = text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '').trim();
-
-  // Strategy 1: Try parsing the whole cleaned response
-  const strategies = [
-    noThinking,
-    noThinking.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim(),
-  ];
-
-  for (const candidate of strategies) {
-    const s = candidate.indexOf('[');
-    const e = candidate.lastIndexOf(']');
-    if (s !== -1 && e !== -1 && e > s) {
-      try {
-        const parsed = JSON.parse(candidate.slice(s, e + 1));
-        if (Array.isArray(parsed)) return parsed;
-      } catch {}
+  if (!text) return [];
+  const clean = text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
+                    .replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+  for (const s of [clean, text]) {
+    const si = s.indexOf('['), ei = s.lastIndexOf(']');
+    if (si !== -1 && ei > si) {
+      try { const p = JSON.parse(s.slice(si, ei + 1)); if (Array.isArray(p)) return p; } catch {}
     }
   }
-
-  // Strategy 2: Extract individual JSON objects with org_name field
-  const objRegex = /\{[^{}]*"org_name"[^{}]*\}/g;
-  const matches = noThinking.match(objRegex);
-  if (matches) {
-    const parsed = [];
-    for (const m of matches) {
-      try { parsed.push(JSON.parse(m)); } catch {}
-    }
-    if (parsed.length > 0) return parsed;
-  }
-
-  console.warn('[Lead Discovery] JSON parse failed. Response snippet:', text.substring(0, 300));
-  return [];
+  const objs = []; const re = /\{[^{}]*"org_name"[^{}]*\}/g; let m;
+  while ((m = re.exec(clean)) !== null) { try { objs.push(JSON.parse(m[0])); } catch {} }
+  return objs;
 }
 
-function parseScoreFromResponse(text) {
-  if (!text) return { score: 50, reasoning: 'No response' };
-  const noThinking = text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '').trim();
-  const cleaned = noThinking.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
-  const s = cleaned.indexOf('{');
-  const e = cleaned.lastIndexOf('}');
-  if (s === -1 || e === -1) return { score: 50, reasoning: 'Parse failed' };
-  try {
-    return JSON.parse(cleaned.slice(s, e + 1));
-  } catch {
-    return { score: 50, reasoning: 'Parse error' };
-  }
+function parseScore(text) {
+  if (!text) return { score: 50, reasoning: 'error' };
+  const clean = text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
+                    .replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+  try { const s = clean.indexOf('{'), e = clean.lastIndexOf('}'); if (s !== -1) return JSON.parse(clean.slice(s, e + 1)); } catch {}
+  const m = clean.match(/"score"\s*:\s*(\d+)/);
+  return { score: m ? parseInt(m[1]) : 50, reasoning: 'extracted' };
 }
 
-// ─── Deduplication ────────────────────────────────────────────────────────────
+// ─── Dedup ────────────────────────────────────────────────────────────────────
 
 async function isDuplicate(orgName) {
-  if (!orgName) return false;
-  const norm = orgName.trim().toLowerCase();
-  const [existing1, existing2] = await Promise.all([
-    Lead.find({}, 'org_name').lean(),
-    LeadQueue.find({ status: { $in: ['pending', 'approved'] } }, 'org_name').lean(),
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const [q, l] = await Promise.all([
+    LeadQueue.find({ discovered_at: { $gte: since } }).select('org_name').lean(),
+    Lead.find({ created_at: { $gte: since } }).select('org_name').lean(),
   ]);
-  const allOrgs = [...existing1, ...existing2].map((d) => d.org_name?.toLowerCase().trim()).filter(Boolean);
-  for (const existing of allOrgs) {
-    if (existing.includes(norm) || norm.includes(existing)) return true;
-    if (levenshtein.get(norm, existing) <= 3) return true;
+  const all = [...q, ...l].map(x => x.org_name.toLowerCase().trim());
+  const name = orgName.toLowerCase().trim();
+  return all.some(n => levenshtein.get(n, name) < 4);
+}
+
+// ─── Run single query ─────────────────────────────────────────────────────────
+
+async function runQuery(queryObj) {
+  const searchModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash', tools: [{ googleSearch: {} }], generationConfig: { temperature: 0.2 } });
+  const extractModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash', generationConfig: { temperature: 0.1 } });
+  const scoreModel   = genAI.getGenerativeModel({ model: 'gemini-2.5-flash', generationConfig: { temperature: 0.1 } });
+
+  console.log(`[Radar] Query → role:${queryObj.target_role} | region:${queryObj.region}`);
+  console.log(`[Radar]   "${queryObj.q.slice(0,80)}"`);
+
+  const sr = await searchModel.generateContent(buildSearchPrompt(queryObj));
+  const searchText = sr.response.text();
+  if (!searchText || searchText.length < 80) { console.log('[Radar] Empty result'); return []; }
+
+  const er = await extractModel.generateContent(buildExtractionPrompt(searchText, queryObj));
+  const rawLeads = parseLeadsFromResponse(er.response.text());
+  console.log(`[Radar] ${rawLeads.length} leads parsed`);
+
+  const saved = [];
+  for (const lead of rawLeads) {
+    if (!lead.org_name || lead.org_name.length < 3) continue;
+    if (!lead.source_url) { console.log(`[Radar] Skip (no source_url): ${lead.org_name}`); continue; }
+    if (await isDuplicate(lead.org_name)) { console.log(`[Radar] Duplicate: ${lead.org_name}`); continue; }
+
+    const scr = await scoreModel.generateContent(buildScoringPrompt(lead));
+    const { score, reasoning } = parseScore(scr.response.text());
+    if (score < 30) { console.log(`[Radar] Low score (${score}): ${lead.org_name}`); continue; }
+
+    try {
+      const item = await LeadQueue.create({
+        org_name: lead.org_name,
+        type: lead.type || 'corporate',
+        city: lead.city || null,
+        state: lead.state || null,
+        contact_name: lead.contact_name || null,
+        role: lead.role || null,
+        target_role: lead.target_role || queryObj.target_role,
+        email: lead.email || null,
+        phone: lead.phone || null,
+        employees_or_students: lead.employees_or_students || null,
+        estimated_value: lead.estimated_annual_value_inr || 0,
+        ai_score: score,
+        ai_reasoning: reasoning,
+        why_good_lead: lead.why_good_lead || null,
+        source_url: lead.source_url || null,
+        discovery_query: queryObj.q,
+        discovery_source: 'google_search',
+        status: 'pending',
+        discovered_at: new Date(),
+      });
+      saved.push(item);
+      console.log(`[Radar] Saved: ${lead.org_name} | score:${score} | role:${lead.target_role || queryObj.target_role}`);
+      console.log(`[Radar]   source: ${lead.source_url}`);
+    } catch (e) { if (e.code !== 11000) console.error('[Radar] Save error:', e.message); }
   }
-  return false;
+  return saved;
 }
 
-// ─── Core Discovery Function ──────────────────────────────────────────────────
+// ─── Full run ─────────────────────────────────────────────────────────────────
 
-async function runDiscovery(queries = null) {
-  const startTime = Date.now();
-  const allQueries = queries || [...SCHOOL_QUERIES, ...CORP_QUERIES];
-  const selectedQueries = [...allQueries].sort(() => Math.random() - 0.5).slice(0, 4);
-
-  const log = await DiscoveryLog.create({
-    run_at: new Date(),
-    queries_run: selectedQueries,
-    status: 'running',
-  });
-
-  let totalFound = 0;
-  let totalAdded = 0;
-  let totalSkipped = 0;
-
-  try {
-    // Step 1 model: grounded search (returns descriptive text)
-    const searchModel = genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
-      tools: [{ googleSearch: {} }],
-      generationConfig: { temperature: 0.3 },
-    });
-
-    // Step 2 model: JSON extraction from search text (no grounding)
-    const extractModel = genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
-      generationConfig: { temperature: 0.1 },
-    });
-
-    // Scoring model
-    const scoreModel = genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
-      generationConfig: { temperature: 0.1 },
-    });
-
-    for (const query of selectedQueries) {
-      console.log(`[Lead Discovery] Query: "${query}"`);
-      try {
-        // ── Step 1: Search with grounding ──────────────────────────────────
-        let searchText = '';
-        try {
-          const searchResult = await searchModel.generateContent(buildSearchPrompt(query));
-          searchText = searchResult.response.text();
-          console.log(`[Lead Discovery] Search response (${searchText.length} chars)`);
-        } catch (searchErr) {
-          console.error('[Lead Discovery] Search step failed:', searchErr.message);
-          continue;
-        }
-
-        if (!searchText || searchText.trim().length < 20) {
-          console.warn('[Lead Discovery] Empty search response, skipping');
-          continue;
-        }
-
-        // ── Step 2: Extract JSON from search text ──────────────────────────
-        let leads = [];
-        try {
-          const extractResult = await extractModel.generateContent(
-            buildExtractionPrompt(searchText, query)
-          );
-          const extractText = extractResult.response.text();
-          leads = parseLeadsFromResponse(extractText);
-          console.log(`[Lead Discovery] Extracted ${leads.length} leads from "${query}"`);
-        } catch (extractErr) {
-          console.error('[Lead Discovery] Extraction step failed:', extractErr.message);
-          continue;
-        }
-
-        totalFound += leads.length;
-
-        for (const lead of leads) {
-          if (!lead.org_name || !lead.type) continue;
-
-          const dup = await isDuplicate(lead.org_name);
-          if (dup) {
-            totalSkipped++;
-            continue;
-          }
-
-          // Score
-          let score = 50;
-          let reasoning = lead.why_good_lead || '';
-          try {
-            const scoreResult = await scoreModel.generateContent(buildScoringPrompt(lead));
-            const scored = parseScoreFromResponse(scoreResult.response.text());
-            score = Math.min(100, Math.max(0, scored.score || 50));
-            reasoning = scored.reasoning || reasoning;
-          } catch (scoreErr) {
-            console.warn('[Lead Discovery] Scoring failed for', lead.org_name, '— using default 50');
-          }
-
-          // Map extended types: clinic/ngo/rehab/coaching → corporate slot in pipeline
-          const validTypes = ['school', 'corporate', 'clinic', 'ngo', 'rehab', 'coaching'];
-          const leadType = validTypes.includes(lead.type) ? lead.type : 'corporate';
-
-          await LeadQueue.create({
-            type: leadType,
-            org_name: lead.org_name,
-            contact_name: lead.contact_name || null,
-            role: lead.role || null,
-            city: lead.city || '',
-            state: lead.state || '',
-            email: lead.email || null,
-            phone: lead.phone || null,
-            employees_or_students: lead.employees_or_students || null,
-            estimated_value: lead.estimated_annual_value_inr || 0,
-            ai_score: score,
-            ai_reasoning: reasoning,
-            discovery_source: 'google_search',
-            discovery_query: query,
-            source_url: lead.source_url || null,
-            status: 'pending',
-          });
-
-          totalAdded++;
-          console.log(`[Lead Discovery] ✅ Added: ${lead.org_name} (score: ${score})`);
-        }
-
-        // Respect rate limits
-        await new Promise((r) => setTimeout(r, 3000));
-      } catch (queryErr) {
-        console.error(`[Lead Discovery] Query pipeline failed: "${query}"`, queryErr.message);
-      }
-    }
-
-    await DiscoveryLog.findByIdAndUpdate(log._id, {
-      leads_found: totalFound,
-      leads_added_to_queue: totalAdded,
-      duplicates_skipped: totalSkipped,
-      status: 'success',
-      duration_seconds: Math.round((Date.now() - startTime) / 1000),
-    });
-
-    console.log(
-      `[Lead Discovery] ✅ Complete — Found: ${totalFound}, Added: ${totalAdded}, Skipped: ${totalSkipped}`
-    );
-
-    // Notify Sairam + Abhijay
-    if (totalAdded > 0) {
-      try {
-        const newItems = await LeadQueue.find({ status: 'pending' })
-          .sort({ _id: -1 })
-          .limit(totalAdded);
-        await sendRadarDiscoveryEmail(newItems);
-      } catch (emailErr) {
-        console.error('[Lead Discovery] Email notification failed:', emailErr.message);
-      }
-    }
-  } catch (err) {
-    await DiscoveryLog.findByIdAndUpdate(log._id, {
-      leads_found: totalFound,
-      leads_added_to_queue: totalAdded,
-      duplicates_skipped: totalSkipped,
-      status: 'failed',
-      error: err.message,
-      duration_seconds: Math.round((Date.now() - startTime) / 1000),
-    });
-    console.error('[Lead Discovery] ❌ Critical error:', err.message);
-    throw err;
+async function runDiscovery(batch) {
+  const queries = batch || QUERIES;
+  const allSaved = [];
+  console.log(`[Radar] Starting — ${queries.length} queries`);
+  for (const q of queries) {
+    try { const s = await runQuery(q); allSaved.push(...s); await new Promise(r => setTimeout(r, 4000)); }
+    catch (e) { console.error('[Radar] Query error:', e.message); }
   }
+  try { await DiscoveryLog.create({ queries_run: queries.length, leads_found: allSaved.length, timestamp: new Date() }); } catch {}
+  if (allSaved.length > 0) sendRadarDiscoveryEmail(allSaved).catch(e => console.error('[Radar] Email:', e.message));
+  console.log(`[Radar] Done — ${allSaved.length} saved`);
+  return allSaved;
 }
 
-// ─── Weekly deep scan ─────────────────────────────────────────────────────────
-
-async function runWeeklyDeepScan() {
-  console.log('[Lead Discovery] 🔍 Weekly deep scan — all queries');
-  await runDiscovery([...SCHOOL_QUERIES, ...CORP_QUERIES]);
-}
-
-// ─── Single-query debug run (for test endpoint) ───────────────────────────────
+// ─── Debug ────────────────────────────────────────────────────────────────────
 
 async function runTestDiscovery() {
-  const testQuery = 'top CBSE private schools Hyderabad Gachibowli 2025 student counsellor';
-
-  const searchModel = genAI.getGenerativeModel({
-    model: 'gemini-2.5-flash',
-    tools: [{ googleSearch: {} }],
-    generationConfig: { temperature: 0.3 },
-  });
-
-  const extractModel = genAI.getGenerativeModel({
-    model: 'gemini-2.5-flash',
-    generationConfig: { temperature: 0.1 },
-  });
-
-  const searchResult = await searchModel.generateContent(buildSearchPrompt(testQuery));
-  const searchText = searchResult.response.text();
-
-  const extractResult = await extractModel.generateContent(
-    buildExtractionPrompt(searchText, testQuery)
-  );
-  const extractText = extractResult.response.text();
-  const leads = parseLeadsFromResponse(extractText);
-
-  return {
-    query: testQuery,
-    searchResponseLength: searchText.length,
-    searchResponsePreview: searchText.substring(0, 500),
-    extractionResponse: extractText.substring(0, 1000),
-    parsedLeads: leads,
-    parsedCount: leads.length,
-  };
+  const q = QUERIES[0];
+  const sm = genAI.getGenerativeModel({ model: 'gemini-2.5-flash', tools: [{ googleSearch: {} }], generationConfig: { temperature: 0.2 } });
+  const em = genAI.getGenerativeModel({ model: 'gemini-2.5-flash', generationConfig: { temperature: 0.1 } });
+  const sr = await sm.generateContent(buildSearchPrompt(q));
+  const searchText = sr.response.text();
+  const er = await em.generateContent(buildExtractionPrompt(searchText, q));
+  const extractText = er.response.text();
+  return { query: q, raw_search: searchText.slice(0, 2000), raw_extract: extractText.slice(0, 2000), parsed: parseLeadsFromResponse(extractText) };
 }
 
-// ─── Cron schedule ────────────────────────────────────────────────────────────
+// ─── Cron ─────────────────────────────────────────────────────────────────────
 
-function startCronJobs() {
-  cron.schedule('0 */6 * * *', () => {
-    console.log('[Lead Discovery] ⏰ Cron: every-6h run');
-    runDiscovery().catch(console.error);
+function startDiscoveryJobs() {
+  cron.schedule('0 */6 * * *', async () => {
+    const south = QUERIES.filter(q => ['Telangana','Karnataka','Tamil Nadu','Kerala','South India','AP'].some(r => q.region.includes(r)));
+    const rest  = QUERIES.filter(q => !south.includes(q));
+    const batch = [...south.sort(() => Math.random()-0.5).slice(0,3), ...rest.sort(() => Math.random()-0.5).slice(0,1)];
+    await runDiscovery(batch);
   });
-
-  cron.schedule('0 9 * * 1', () => {
-    console.log('[Lead Discovery] ⏰ Cron: Monday deep scan');
-    runWeeklyDeepScan().catch(console.error);
-  });
-
-  console.log('[Lead Discovery] Cron jobs scheduled (6h + Monday 9am deep scan)');
+  cron.schedule('0 1 * * 1', () => runDiscovery(QUERIES), { timezone: 'Asia/Kolkata' });
+  console.log('[Radar] Jobs scheduled (6h scan + Monday full scan)');
 }
 
-module.exports = { runDiscovery, runWeeklyDeepScan, runTestDiscovery, startCronJobs };
+module.exports = { startDiscoveryJobs, runDiscovery, runTestDiscovery };

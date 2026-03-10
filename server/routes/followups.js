@@ -4,6 +4,7 @@ const Followup = require('../models/Followup');
 const Activity = require('../models/Activity');
 const Lead = require('../models/Lead');
 const { sendFollowupScheduledEmail } = require('../services/emailService');
+const { createFollowupEvent } = require('../services/calendarService');
 
 // GET /api/followups
 router.get('/', async (req, res) => {
@@ -37,8 +38,9 @@ router.post('/', async (req, res) => {
     });
     const populated = await Followup.findById(followup._id).populate('lead_id', 'org_name type city contact_name phone');
     res.status(201).json(populated);
-    // Fire-and-forget email notification
+    // Fire-and-forget: email + Google Calendar (both non-blocking)
     sendFollowupScheduledEmail(followup, populated.lead_id).catch(console.error);
+    createFollowupEvent(followup, populated.lead_id).catch(console.error);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
