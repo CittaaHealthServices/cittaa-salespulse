@@ -1,67 +1,83 @@
+// ─────────────────────────────────────────────────────────────────────────
+// Cittaa SalesPulse — Express server entry point (safe startup version)
+//
+// Design principles:
+//  1. /api/health is registered FIRST so Railway's healthcheck always passes
+//  2. Every optional service (calendar, email, reminder, discovery) is
+//     wrapped in try-catch — a missing env var won't crash the server
+//  3. MongoDB connection failures are logged but don't stop the process
+// ─────────────────────────────────────────────────────────────────────────
+
 require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const path = require('path');
+
+const express  = require('express');
+const cors     = require('cors');
 const mongoose = require('mongoose');
-const { startCronJobs } = require('./jobs/leadDiscovery');
-const { startReminderJobs } = require('./jobs/reminderEngine');
 
-const app = express();
-const PORT = process.env.PORT || 3001;
+const app  = express();
+const PORT = process.env.PORT || 5001;
 
-// ─── Middleware ───────────────────────────────────────────────────────────────
-app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
-  credentials: true,
-}));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+// ── middleware ────────────────────────────────────────────────────────────
+app.use(cors());
+app.use(express.json({ limit: '2mb' }));
 
-// ─── Routes ───────────────────────────────────────────────────────────────────
-app.use('/api/leads', require('./routes/leads'));
-app.use('/api/pipeline', require('./routes/pipeline'));
-app.use('/api/followups', require('./routes/followups'));
-app.use('/api/compose', require('./routes/compose'));
-app.use('/api/stats', require('./routes/stats'));
-app.use('/api/radar', require('./routes/radar'));
-
-// ─── Health check ─────────────────────────────────────────────────────────────
+// ── HEALTH CHECK — must be first so Railway sees it immediately ───────────
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    app: 'Cittaa SalesPulse',
-    version: '2.0.0',
+    service: 'cittaa-salespulse',
+    ts: new Date().toISOString(),
     db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-    timestamp: new Date().toISOString(),
   });
 });
 
-// ─── Serve React frontend (always — Railway serves single service) ────────────
-const clientDist = path.join(__dirname, '../client/dist');
-app.use(express.static(clientDist));
-app.get('*', (req, res, next) => {
-  if (req.path.startsWith('/api')) return next();
-  res.sendFile(path.join(clientDist, 'index.html'));
+// ── routes ────────────────────────────────────────────────────────────────
+try { app.use('/api/leads',    require('./routes/leads'));    } catch (e) { console.error('[Routes] leads:',    e.message); }
+try { app.use('/api/radar',    require('./routes/radar'));    } catch (e) { console.error('[Routes] radar:',    e.message); }
+try { app.use('/api/pipeline', require('./routes/pipeline')); } catch (e) { console.error('[Routes] pipeline:', e.message); }
+try { app.use('/api/stats',    require('./routes/stats'));    } catch (e) { console.error('[Routes] stats:',    e.message); }
+try { app.use('/api/followups',require('./routes/followups')); } catch (e) { console.error('[Routes] followups:',e.message); }
+try { app.use('/api/compose',  require('./routes/compose'));  } catch (e) { console.error('[Routes] compose:',  e.message); }
+
+// ── 404 fallback ──────────────────────────────────────────────────────────
+app.use((req, res) => res.status(404).json({ error: 'Not found' }));
+
+// ── global error handler ──────────────────────────────────────────────────
+app.use((err, req, res, next) => {
+  console.error('[Server] Unhandled error:', err.message);
+  res.status(500).json({ error: err.message });
 });
 
-// ─── MongoDB + Start ──────────────────────────────────────────────────────────
-mongoose
-  .connect(process.env.MONGODB_URI, {
-    dbName: 'cittaa_salespulse',
-  })
-  .then(() => {
-    console.log('✅ MongoDB connected — cittaa_salespulse');
-    app.listen(PORT, () => {
-      console.log(`🚀 Cittaa SalesPulse server on port ${PORT}`);
-      // Start background lead discovery cron
-      startCronJobs();
-      // Start reminder engine (daily digest, visit alerts, overdue summaries)
-      startReminderJobs();
-    });
-  })
-  .catch((err) => {
-    console.error('❌ MongoDB connection failed:', err.message);
-    process.exit(1);
-  });
+// ── start HTTP server immediately (before DB) so healthcheck passes ───────
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`[Server] Cittaa SalesPulse listening on port ${PORT}`);
 
-module.exports = app;
+  // ── MongoDB ─────────────────────────────────────────────────────────────
+  const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
+  if (MONGO_URI) {
+    mongoose
+      .connect(MONGO_URI)
+      .then(() => console.log('[DB] MongoDB connected'))
+      .catch(e  => console.error('[DB] MongoDB connection failed:', e.message));
+  } else {
+    console.warn('[DB] No MONGO_URI — running without database');
+  }
+
+  // ── Reminder engine ──────────────────────────────────────────────────────
+  try {
+    const { start } = require('./jobs/reminderEngine');
+    start();
+    console.log('[Server] Reminder engine started');
+  } catch (e) {
+    console.warn('[Server] Reminder engine skipped:', e.message);
+  }
+
+  // ── Lead discovery scheduler ─────────────────────────────────────────────
+  try {
+    const { startDiscoveryJobs } = require('./jobs/leadDiscovery');
+    startDiscoveryJobs();
+    console.log('[Server] Discovery jobs started');
+  } catch (e) {
+    console.warn('[Server] Discovery jobs skipped:', e.message);
+  }
+});

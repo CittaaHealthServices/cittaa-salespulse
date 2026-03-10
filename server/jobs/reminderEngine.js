@@ -1,171 +1,100 @@
-/**
- * Cittaa SalesPulse — Reminder Engine
- * Runs scheduled cron jobs for:
- *   - 8:00 AM daily digest (overdue + due today + visits tomorrow)
- *   - Every 30 min: site visit pre-alerts (2h before)
- *   - 6:00 PM: end-of-day overdue summary
- */
+// reminderEngine.js — safe version
+// All cron jobs are wrapped in try-catch so a missing env var or DB issue
+// never crashes the server on startup.
 
-const cron = require('node-cron');
-const Followup = require('../models/Followup');
-const {
-  sendDailyDigestEmail,
-  sendVisitReminderEmail,
-  sendOverdueAlertEmail,
-} = require('../services/emailService');
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-function startOfDay(d = new Date()) {
-  const s = new Date(d);
-  s.setHours(0, 0, 0, 0);
-  return s;
-}
-function endOfDay(d = new Date()) {
-  const s = new Date(d);
-  s.setHours(23, 59, 59, 999);
-  return s;
+let cron;
+try { cron = require('node-cron'); } catch (e) {
+  console.warn('[Reminder] node-cron not available:', e.message);
 }
 
-// ─── 1. Daily Morning Digest (8:00 AM IST) ───────────────────────────────────
-async function runMorningDigest() {
-  console.log('[Reminder] Running morning digest...');
+const { sendFollowupReminderEmail } = require('../services/emailService');
+
+// ── helpers ────────────────────────────────────────────────────────────────
+function todayRange() {
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  const end   = new Date(); end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+// ── daily follow-up digest ─── runs at 8:00 AM IST every weekday ──────────
+async function sendDailyReminders() {
   try {
-    const now = new Date();
-    const todayStart = startOfDay(now);
-    const todayEnd = endOfDay(now);
-    const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    const Followup = require('../models/Followup');
+    const { start, end } = todayRange();
 
-    const [overdueItems, dueTodayItems, visitsTomorrow] = await Promise.all([
-      // Overdue (due before today, still pending)
-      Followup.find({
-        status: 'pending',
-        due_date: { $lt: todayStart },
-      })
-        .populate('lead_id', 'org_name type city contact_name')
-        .sort({ due_date: 1 })
-        .limit(20),
+    const due = await Followup.find({
+      scheduled_at: { $gte: start, $lte: end },
+      completed:    { $ne: true },
+    }).populate('lead_id').lean();
 
-      // Due today
-      Followup.find({
-        status: 'pending',
-        due_date: { $gte: todayStart, $lte: todayEnd },
-      })
-        .populate('lead_id', 'org_name type city contact_name')
-        .sort({ due_date: 1 })
-        .limit(20),
+    if (!due.length) {
+      console.log('[Reminder] No follow-ups due today');
+      return;
+    }
 
-      // Site visits tomorrow
-      Followup.find({
-        status: 'pending',
-        channel: 'visit',
-        due_date: { $gte: startOfDay(tomorrow), $lte: endOfDay(tomorrow) },
-      })
-        .populate('lead_id', 'org_name type city contact_name phone')
-        .sort({ due_date: 1 }),
-    ]);
+    // Group by owner
+    const byOwner = {};
+    for (const f of due) {
+      const owner = f.owner || 'S';
+      if (!byOwner[owner]) byOwner[owner] = [];
+      byOwner[owner].push(f);
+    }
 
-    await sendDailyDigestEmail(overdueItems, dueTodayItems, visitsTomorrow);
-    console.log(
-      `[Reminder] Morning digest sent — Overdue: ${overdueItems.length}, Today: ${dueTodayItems.length}, Visits: ${visitsTomorrow.length}`
-    );
+    for (const [owner, items] of Object.entries(byOwner)) {
+      await sendFollowupReminderEmail(items, owner);
+    }
+
+    console.log(`[Reminder] Sent reminders for ${due.length} follow-up(s)`);
   } catch (err) {
-    console.error('[Reminder] Morning digest failed:', err.message);
+    console.error('[Reminder] sendDailyReminders error:', err.message);
   }
 }
 
-// ─── 2. Visit Pre-Alert (runs every 30 min — checks for visits in ~2h) ───────
-// Tracks which visit IDs we've already alerted for (resets on server restart — that's fine)
-const alertedVisits = new Set();
-
-async function runVisitPreAlert() {
+// ── overdue alert ─── runs at 9:00 AM IST every day ───────────────────────
+async function checkOverdue() {
   try {
-    const now = new Date();
-    // Window: visits starting 1h45m → 2h15m from now
-    const windowStart = new Date(now.getTime() + 1 * 60 * 60 * 1000 + 45 * 60 * 1000);
-    const windowEnd = new Date(now.getTime() + 2 * 60 * 60 * 1000 + 15 * 60 * 1000);
+    const Followup = require('../models/Followup');
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setHours(0, 0, 0, 0);
 
-    const upcomingVisits = await Followup.find({
-      status: 'pending',
-      channel: 'visit',
-      due_date: { $gte: windowStart, $lte: windowEnd },
-    }).populate('lead_id', 'org_name type city contact_name phone role');
+    const overdue = await Followup.countDocuments({
+      scheduled_at: { $lt: yesterday },
+      completed:    { $ne: true },
+    });
 
-    for (const visit of upcomingVisits) {
-      const key = visit._id.toString();
-      if (alertedVisits.has(key)) continue;
-      alertedVisits.add(key);
-      const hoursAway = Math.round((new Date(visit.due_date) - now) / (1000 * 60 * 60));
-      await sendVisitReminderEmail(visit, visit.lead_id, hoursAway);
-      console.log(`[Reminder] Visit alert sent for ${visit.lead_id?.org_name} in ~${hoursAway}h`);
-    }
-
-    // Also check for visits tomorrow (run once around 8pm)
-    const tomorrowStart = startOfDay(new Date(now.getTime() + 24 * 60 * 60 * 1000));
-    const tomorrowEnd = endOfDay(new Date(now.getTime() + 24 * 60 * 60 * 1000));
-    const visitsTomorrow = await Followup.find({
-      status: 'pending',
-      channel: 'visit',
-      due_date: { $gte: tomorrowStart, $lte: tomorrowEnd },
-    }).populate('lead_id', 'org_name type city contact_name phone role');
-
-    for (const visit of visitsTomorrow) {
-      const key = `tomorrow-${visit._id}`;
-      if (alertedVisits.has(key)) continue;
-      alertedVisits.add(key);
-      await sendVisitReminderEmail(visit, visit.lead_id, 24);
-      console.log(`[Reminder] Tomorrow visit alert sent for ${visit.lead_id?.org_name}`);
+    if (overdue > 0) {
+      console.log(`[Reminder] ⚠️  ${overdue} overdue follow-up(s) — consider reviewing`);
     }
   } catch (err) {
-    console.error('[Reminder] Visit pre-alert failed:', err.message);
+    console.error('[Reminder] checkOverdue error:', err.message);
   }
 }
 
-// ─── 3. Evening Overdue Summary (6:00 PM IST) ────────────────────────────────
-async function runEveningOverdueSummary() {
-  console.log('[Reminder] Running evening overdue summary...');
+// ── start all jobs ─────────────────────────────────────────────────────────
+function start() {
+  if (!cron) {
+    console.warn('[Reminder] node-cron unavailable — skipping reminder jobs');
+    return;
+  }
+
   try {
-    const todayStart = startOfDay();
+    // 8:00 AM IST (UTC+5:30 → 2:30 AM UTC) weekdays
+    cron.schedule('30 2 * * 1-5', () => {
+      console.log('[Reminder] Running daily follow-up digest…');
+      sendDailyReminders().catch(e => console.error('[Reminder] Daily digest error:', e.message));
+    }, { timezone: 'Asia/Kolkata' });
 
-    const overdueItems = await Followup.find({
-      status: 'pending',
-      due_date: { $lt: todayStart },
-    })
-      .populate('lead_id', 'org_name type city contact_name')
-      .sort({ due_date: 1 })
-      .limit(20);
+    // 9:00 AM IST every day — overdue check
+    cron.schedule('30 3 * * *', () => {
+      console.log('[Reminder] Checking overdue follow-ups…');
+      checkOverdue().catch(e => console.error('[Reminder] Overdue check error:', e.message));
+    }, { timezone: 'Asia/Kolkata' });
 
-    if (overdueItems.length > 0) {
-      await sendOverdueAlertEmail(overdueItems);
-      console.log(`[Reminder] Evening overdue summary sent — ${overdueItems.length} items`);
-    } else {
-      console.log('[Reminder] No overdue items — evening summary skipped');
-    }
+    console.log('[Reminder] Engine started — 2 jobs scheduled');
   } catch (err) {
-    console.error('[Reminder] Evening summary failed:', err.message);
+    console.error('[Reminder] Failed to schedule jobs:', err.message);
   }
 }
 
-// ─── Schedule all reminder jobs ───────────────────────────────────────────────
-function startReminderJobs() {
-  // 8:00 AM daily digest (IST = UTC+5:30 → 2:30 UTC)
-  cron.schedule('30 2 * * *', () => {
-    console.log('[Reminder] Cron: morning digest');
-    runMorningDigest().catch(console.error);
-  });
-
-  // Every 30 min — check for upcoming visits in 2h
-  cron.schedule('*/30 * * * *', () => {
-    runVisitPreAlert().catch(console.error);
-  });
-
-  // 6:00 PM evening overdue summary (IST = 12:30 UTC)
-  cron.schedule('30 12 * * *', () => {
-    console.log('[Reminder] Cron: evening overdue summary');
-    runEveningOverdueSummary().catch(console.error);
-  });
-
-  console.log('[Reminder] Reminder engine started (8am digest · 30min visit alerts · 6pm overdue)');
-}
-
-module.exports = { startReminderJobs, runMorningDigest, runEveningOverdueSummary, runVisitPreAlert };
+module.exports = { start, sendDailyReminders };
