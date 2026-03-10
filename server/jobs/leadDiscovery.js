@@ -1,405 +1,306 @@
-const cron = require('node-cron');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-const LeadQueue = require('../models/LeadQueue');
-const Lead = require('../models/Lead');
-const DiscoveryLog = require('../models/DiscoveryLog');
-const { sendRadarDiscoveryEmail } = require('../services/emailService');
-const levenshtein = require('fast-levenshtein');
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-// ─── Query Bank ───────────────────────────────────────────────────────────────
-// ALL queries target JOB POSTINGS on LinkedIn, Naukri, Indeed, Shine, Glassdoor
-// Logic: if a company is HIRING for a counsellor / wellness role → they need Cittaa
-// source_url = the actual job post = 100% authentic, verifiable lead
+// jobs/leadDiscovery.js
+// Discovers leads from job postings on Naukri, LinkedIn, Indeed, Shine, Glassdoor.
+// Logic: an org actively hiring for counsellor / wellness / EAP roles = hot lead for Cittaa.
 //
-// target_role = person who APPROVED the job post (the decision-maker to approach)
-// South India priority: Telangana, AP, Karnataka, Tamil Nadu, Kerala
+// Two-step Gemini pipeline:
+//   Step 1 (grounded): search returns narrative text with real job posting data
+//   Step 2 (extract):  separate model converts narrative → clean JSON lead record
 
+require('dotenv').config();
+
+const mongoose = require('mongoose');
+let cron;
+try { cron = require('node-cron'); } catch (e) { console.warn('[Discovery] node-cron unavailable'); }
+
+// ── Gemini setup ───────────────────────────────────────────────────────────
+function getGemini() {
+  const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY;
+  if (!key) return null;
+  try {
+    const { GoogleGenerativeAI } = require('@google/generative-ai');
+    return new GoogleGenerativeAI(key);
+  } catch (e) { console.warn('[Discovery] Gemini init failed:', e.message); return null; }
+}
+
+// ── lazy model loaders ─────────────────────────────────────────────────────
+function LeadQueue() { return require('../models/LeadQueue'); }
+function DiscoveryLog() { return require('../models/DiscoveryLog'); }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QUERIES — each query targets a specific job platform + role + region
+// type tells us what kind of org this is
+// target_role tells Cittaa WHO to pitch to at that org
+// ─────────────────────────────────────────────────────────────────────────────
 const QUERIES = [
-  // ── SCHOOLS — hiring school counsellor / psychologist ─────────────────────
-  {
-    q: 'site:naukri.com "school counsellor" OR "school psychologist" Hyderabad Telangana 2024 2025',
-    target_role: 'Principal / Vice Principal',
-    type: 'school', region: 'Telangana',
-    platform: 'Naukri',
-  },
-  {
-    q: 'site:linkedin.com/jobs "school counsellor" OR "student counsellor" Hyderabad Bangalore Chennai 2025',
-    target_role: 'Principal / Vice Principal',
-    type: 'school', region: 'South India',
-    platform: 'LinkedIn Jobs',
-  },
-  {
-    q: 'site:naukri.com "special educator" OR "special education teacher" Hyderabad Bangalore Chennai Pune 2025',
-    target_role: 'Principal / Special Education Coordinator',
-    type: 'school', region: 'South India',
-    platform: 'Naukri',
-  },
-  {
-    q: 'site:shine.com "school counsellor" OR "student wellbeing" Hyderabad Secunderabad Bangalore 2025',
-    target_role: 'Principal / Counselling Coordinator',
-    type: 'school', region: 'South India',
-    platform: 'Shine',
-  },
-  {
-    q: 'site:naukri.com "child psychologist" OR "counselling psychologist" school Hyderabad Chennai Bangalore 2025',
-    target_role: 'Principal / Founder',
-    type: 'school', region: 'South India',
-    platform: 'Naukri',
-  },
-  {
-    q: 'site:indeed.com "school counsellor" OR "student mental health" India 2025',
-    target_role: 'Principal / Vice Principal',
-    type: 'school', region: 'All India',
-    platform: 'Indeed',
-  },
-  {
-    q: 'site:naukri.com "school counsellor" OR "student counsellor" Chennai Tamil Nadu Kerala 2025',
-    target_role: 'Principal / Counselling Head',
-    type: 'school', region: 'Tamil Nadu / Kerala',
-    platform: 'Naukri',
-  },
+  // ──────────────── SCHOOLS ────────────────────────────────────────────────
 
-  // ── COACHING INSTITUTES — hiring student wellness / psychologist ───────────
-  {
-    q: 'site:naukri.com "student counsellor" OR "psychologist" "coaching institute" OR "coaching center" Hyderabad Kota 2025',
-    target_role: 'Centre Director / Academic Head',
-    type: 'coaching', region: 'South India / Rajasthan',
-    platform: 'Naukri',
-  },
-  {
-    q: 'site:linkedin.com/jobs "student wellness" OR "student counsellor" coaching institute Hyderabad Bangalore 2025',
-    target_role: 'Centre Director / Academic Head',
-    type: 'coaching', region: 'South India',
-    platform: 'LinkedIn Jobs',
-  },
+  // Naukri – schools – South India
+  { q: 'site:naukri.com "school counsellor" OR "school psychologist" Hyderabad Telangana 2025', target_role: 'Principal / Vice Principal', type: 'school', region: 'Telangana', platform: 'Naukri' },
+  { q: 'site:naukri.com "school counsellor" OR "guidance counsellor" Bengaluru Karnataka 2025', target_role: 'Principal / Vice Principal', type: 'school', region: 'Karnataka', platform: 'Naukri' },
+  { q: 'site:naukri.com "school counsellor" OR "student counsellor" Chennai Tamil Nadu 2025', target_role: 'Principal / Vice Principal', type: 'school', region: 'Tamil Nadu', platform: 'Naukri' },
 
-  // ── CORPORATES — hiring EAP / wellness / mental health counsellor ──────────
-  {
-    q: 'site:naukri.com "employee assistance program" OR "EAP counsellor" OR "employee wellness" Hyderabad 2025',
-    target_role: 'HR Head / CHRO / People & Culture Head',
-    type: 'corporate', region: 'Telangana',
-    platform: 'Naukri',
-  },
-  {
-    q: 'site:linkedin.com/jobs "employee wellness" OR "workplace mental health" OR "EAP" Hyderabad Bangalore 2025',
-    target_role: 'CHRO / HR Director / Employee Experience Head',
-    type: 'corporate', region: 'South India',
-    platform: 'LinkedIn Jobs',
-  },
-  {
-    q: 'site:naukri.com "wellbeing manager" OR "mental health counsellor" corporate Bangalore Hyderabad Chennai 2025',
-    target_role: 'HR Head / Wellness Manager',
-    type: 'corporate', region: 'South India',
-    platform: 'Naukri',
-  },
-  {
-    q: 'site:shine.com "employee counsellor" OR "HR wellness" OR "workplace counsellor" Hyderabad Bangalore 2025',
-    target_role: 'HR Director / People Operations Head',
-    type: 'corporate', region: 'South India',
-    platform: 'Shine',
-  },
-  {
-    q: 'site:naukri.com "employee assistance" OR "EAP" counsellor IT company Hyderabad Bangalore Pune 2025',
-    target_role: 'CHRO / HR Head',
-    type: 'corporate', region: 'South India / Maharashtra',
-    platform: 'Naukri',
-  },
-  {
-    q: 'site:glassdoor.com "mental health counsellor" OR "employee wellness" job India 2025',
-    target_role: 'CHRO / HR Director',
-    type: 'corporate', region: 'All India',
-    platform: 'Glassdoor',
-  },
-  {
-    q: 'site:naukri.com "wellness coordinator" OR "wellbeing lead" hospital healthcare Hyderabad Bangalore 2025',
-    target_role: 'HR Head / Medical Director',
-    type: 'corporate', region: 'South India',
-    platform: 'Naukri',
-  },
-  {
-    q: 'site:linkedin.com/jobs "mental health" OR "EAP" OR "employee wellbeing" Pune Mumbai Delhi 2025',
-    target_role: 'CHRO / HR Director / Wellness Lead',
-    type: 'corporate', region: 'North / West India',
-    platform: 'LinkedIn Jobs',
-  },
+  // Naukri – schools – North India
+  { q: 'site:naukri.com "school counsellor" OR "school psychologist" Delhi NCR Noida Gurugram 2025', target_role: 'Principal / Vice Principal', type: 'school', region: 'Delhi NCR', platform: 'Naukri' },
+  { q: 'site:naukri.com "school counsellor" OR "guidance counsellor" Mumbai Pune Maharashtra 2025', target_role: 'Principal / Vice Principal', type: 'school', region: 'Maharashtra', platform: 'Naukri' },
 
-  // ── CLINICS & NGOs — hiring psychologist / therapist ─────────────────────
-  {
-    q: 'site:naukri.com "clinical psychologist" OR "counselling psychologist" clinic Hyderabad Bangalore Chennai 2025',
-    target_role: 'Founder / Lead Psychologist / Clinical Director',
-    type: 'clinic', region: 'South India',
-    platform: 'Naukri',
-  },
-  {
-    q: 'site:linkedin.com/jobs "psychologist" OR "therapist" NGO OR "non-profit" mental health Hyderabad Bangalore 2025',
-    target_role: 'Programme Director / CEO / Founder',
-    type: 'ngo', region: 'South India',
-    platform: 'LinkedIn Jobs',
-  },
-  {
-    q: 'site:naukri.com "occupational therapist" OR "special educator" rehabilitation centre Hyderabad Bangalore Chennai 2025',
-    target_role: 'Centre Director / Head Therapist / Founder',
-    type: 'rehab', region: 'South India',
-    platform: 'Naukri',
-  },
-  {
-    q: 'site:naukri.com "child psychologist" OR "ADHD" OR "autism therapist" clinic centre Hyderabad Bangalore Pune 2025',
-    target_role: 'Founder / Lead Psychologist',
-    type: 'clinic', region: 'South India',
-    platform: 'Naukri',
-  },
-  {
-    q: 'site:indeed.com "psychologist" OR "mental health counsellor" NGO rehab clinic India 2025',
-    target_role: 'Founder / Programme Director',
-    type: 'clinic', region: 'All India',
-    platform: 'Indeed',
-  },
+  // LinkedIn – schools
+  { q: 'site:linkedin.com/jobs "school counsellor" OR "school psychologist" India 2025', target_role: 'Principal / Vice Principal', type: 'school', region: 'Pan India', platform: 'LinkedIn Jobs' },
+  { q: 'site:linkedin.com/jobs "student counsellor" OR "guidance counsellor" school India 2025', target_role: 'Head of School / Director', type: 'school', region: 'Pan India', platform: 'LinkedIn Jobs' },
+
+  // Indeed – schools
+  { q: 'site:indeed.com "school counsellor" OR "school psychologist" India hiring 2025', target_role: 'Principal / Vice Principal', type: 'school', region: 'Pan India', platform: 'Indeed' },
+
+  // Shine – schools
+  { q: 'site:shine.com "school counsellor" OR "student counsellor" India 2025', target_role: 'Principal / Vice Principal', type: 'school', region: 'Pan India', platform: 'Shine' },
+
+  // ──────────────── CORPORATES / EAP ───────────────────────────────────────
+
+  // Naukri – corporate EAP / wellness – South India
+  { q: 'site:naukri.com "EAP counsellor" OR "employee assistance" counsellor Hyderabad Bengaluru 2025', target_role: 'CHRO / HR Director', type: 'corporate', region: 'South India', platform: 'Naukri' },
+  { q: 'site:naukri.com "corporate wellness" OR "employee wellbeing" counsellor Bengaluru Hyderabad 2025', target_role: 'HR Manager / L&D Head', type: 'corporate', region: 'South India', platform: 'Naukri' },
+  { q: 'site:naukri.com "mental health counsellor" OR "workplace counsellor" IT company Bengaluru Pune 2025', target_role: 'HR Business Partner / CHRO', type: 'corporate', region: 'IT Hubs', platform: 'Naukri' },
+
+  // Naukri – corporate EAP – North India
+  { q: 'site:naukri.com "EAP counsellor" OR "employee wellness" counsellor Delhi Gurugram Noida 2025', target_role: 'CHRO / HR Director', type: 'corporate', region: 'Delhi NCR', platform: 'Naukri' },
+  { q: 'site:naukri.com "corporate counsellor" OR "mental health" wellness officer Mumbai Pune 2025', target_role: 'HR Manager / L&D Head', type: 'corporate', region: 'Maharashtra', platform: 'Naukri' },
+  { q: 'site:naukri.com "wellbeing manager" OR "mental health first aider" India corporate 2025', target_role: 'CHRO / VP People', type: 'corporate', region: 'Pan India', platform: 'Naukri' },
+
+  // LinkedIn – corporate EAP
+  { q: 'site:linkedin.com/jobs "EAP counsellor" OR "employee assistance programme" India 2025', target_role: 'CHRO / HR Director', type: 'corporate', region: 'Pan India', platform: 'LinkedIn Jobs' },
+  { q: 'site:linkedin.com/jobs "corporate mental health" OR "employee wellbeing" counsellor India 2025', target_role: 'HR Manager / People & Culture Head', type: 'corporate', region: 'Pan India', platform: 'LinkedIn Jobs' },
+  { q: 'site:linkedin.com/jobs "workplace counsellor" OR "corporate wellness counsellor" India hiring 2025', target_role: 'HR Business Partner / CHRO', type: 'corporate', region: 'Pan India', platform: 'LinkedIn Jobs' },
+
+  // Indeed – corporate
+  { q: 'site:indeed.com "EAP counsellor" OR "employee assistance" OR "corporate wellness counsellor" India 2025', target_role: 'CHRO / HR Director', type: 'corporate', region: 'Pan India', platform: 'Indeed' },
+
+  // Shine – corporate
+  { q: 'site:shine.com "corporate counsellor" OR "EAP" OR "employee wellbeing" counsellor India 2025', target_role: 'HR Manager / L&D Head', type: 'corporate', region: 'Pan India', platform: 'Shine' },
+
+  // ──────────────── CLINICS / REHAB / NGOs ─────────────────────────────────
+
+  // Clinics / hospitals hiring counsellors
+  { q: 'site:naukri.com "clinical counsellor" OR "counselling psychologist" hospital clinic India 2025', target_role: 'Medical Director / Clinic Head', type: 'clinic', region: 'Pan India', platform: 'Naukri' },
+  { q: 'site:linkedin.com/jobs "counselling psychologist" OR "clinical psychologist" clinic hospital India 2025', target_role: 'Medical Director / HOD Psychology', type: 'clinic', region: 'Pan India', platform: 'LinkedIn Jobs' },
+
+  // Rehab centres
+  { q: 'site:naukri.com "rehabilitation counsellor" OR "addiction counsellor" centre India 2025', target_role: 'Centre Director / Head of Services', type: 'rehab', region: 'Pan India', platform: 'Naukri' },
+
+  // NGOs / social impact
+  { q: 'site:linkedin.com/jobs "counsellor" NGO OR "social impact" OR "mental health" organisation India 2025', target_role: 'Programme Director / CEO', type: 'ngo', region: 'Pan India', platform: 'LinkedIn Jobs' },
+
+  // Coaching institutes
+  { q: 'site:naukri.com "counsellor" OR "psychologist" coaching institute OR "ed-tech" India 2025', target_role: 'Director / Head of Student Success', type: 'coaching', region: 'Pan India', platform: 'Naukri' },
+  { q: 'site:indeed.com "student counsellor" OR "career counsellor" coaching institute India 2025', target_role: 'Director / Academic Head', type: 'coaching', region: 'Pan India', platform: 'Indeed' },
 ];
 
-// ─── Prompts ──────────────────────────────────────────────────────────────────
+// ── prompt builders ────────────────────────────────────────────────────────
+function buildSearchPrompt(query) {
+  return `You are a B2B sales intelligence agent for Cittaa, an AI-powered mental health platform for organisations.
 
-function buildSearchPrompt(queryObj) {
-  return `You are a B2B lead researcher for Cittaa Health Services — mental health & special education technology.
+A company actively HIRING for counsellor / wellness roles proves they need Cittaa's platform.
 
-Cittaa's insight: Any organisation ACTIVELY HIRING for a counsellor, psychologist, EAP manager, or wellness role is a HOT lead — they clearly need mental health support but are still building it manually. Cittaa's platform can scale and augment that.
+Search for: "${query.q}"
 
-SEARCH TASK: "${queryObj.q}"
-PLATFORM: ${queryObj.platform || 'Job platforms (Naukri, LinkedIn Jobs, Indeed, Shine, Glassdoor)'}
-REGION FOCUS: ${queryObj.region}
-DECISION-MAKER TO APPROACH: ${queryObj.target_role}
+For each job posting you find, extract:
+1. The hiring organisation's name and location
+2. The exact job title they posted
+3. A direct URL to the job post on ${query.platform}
+4. Any contact information visible (HR email, phone, LinkedIn page)
+5. Organisation size / employee count if mentioned
+6. The type of organisation (school, corporate, clinic, NGO, rehab, coaching)
 
-Using Google Search, find REAL active job postings matching this search. For each job posting found:
-1. Extract the HIRING COMPANY name (this is the lead)
-2. Find the company's official website
-3. Note the job title they are hiring for (proof they need Cittaa)
-4. Find the decision-maker who would have approved this hire: ${queryObj.target_role}
-5. Get their email/phone from LinkedIn company page, official website, JustDial, or Google Maps
-6. Get the DIRECT URL of the job posting (Naukri/LinkedIn/Indeed link) — this is the source_url
+Focus on REAL, VERIFIABLE job postings — not generic aggregators or fake listings.
+The source URL must be a real link to the actual job post on ${query.platform}.
 
-For each verified lead report:
-- Company name (official)
-- Type: school / corporate / clinic / ngo / rehab / coaching
-- City, State
-- Size (approx students or employees)
-- Job title being hired (e.g. "School Counsellor", "EAP Counsellor", "Wellness Manager")
-- Decision-maker name + title (${queryObj.target_role}) if findable
-- Email + phone (from their official website or directory)
-- The job posting URL
-- Why this makes them a perfect Cittaa lead
-
-RULES:
-- Only real job postings — skip anything you cannot verify
-- The source_url MUST be the actual job post URL (naukri.com/..., linkedin.com/jobs/..., etc.)
-- Region priority: ${queryObj.region}
-- Find 4-5 real verified leads`;
+Region focus: ${query.region}
+Decision maker to approach at this org: ${query.target_role}`;
 }
 
-function buildExtractionPrompt(searchText, queryObj) {
-  return `Extract B2B leads from these job posting search results as a JSON array.
+function buildExtractionPrompt(text, query) {
+  return `Extract lead information from this job posting data and return ONLY valid JSON.
 
-Job postings found:
-"""
-${searchText}
-"""
+Input text:
+${text}
 
-CONTEXT: Each job posting = a company that needs Cittaa's mental health / special education tech.
-Platform searched: ${queryObj.platform || 'Job platforms'}
-Decision-maker to approach: ${queryObj.target_role}
-
-Types: "school" | "corporate" | "clinic" | "ngo" | "rehab" | "coaching"
-Annual value: school<500=150000, 500-2000=300000, 2000+=600000; corp200-500=250000, 500-2000=500000, 2000+=1200000; clinic/ngo/rehab=120000
-
-Return ONLY a JSON array. Each item EXACTLY:
+Return a JSON array. Each object must have these exact fields:
 {
-  "org_name": "hiring company official name",
-  "type": "school|corporate|clinic|ngo|rehab|coaching",
-  "city": "city",
-  "state": "state",
-  "job_title_hiring_for": "exact job title they posted (e.g. School Counsellor, EAP Manager)",
-  "contact_name": "decision-maker name or null",
-  "role": "contact's actual job title or null",
-  "target_role": "${queryObj.target_role}",
-  "email": "email or null",
-  "phone": "phone or null",
-  "employees_or_students": <number or null>,
-  "estimated_annual_value_inr": <number>,
-  "why_good_lead": "they are actively hiring for [job_title] — proof they need mental health support but building it manually; Cittaa can scale this",
-  "source_url": "direct URL of the job posting on Naukri/LinkedIn/Indeed/Shine — mandatory",
-  "discovery_query": "${queryObj.q}"
+  "org_name": "Full organisation name",
+  "type": "${query.type}",
+  "city": "City name",
+  "state": "State name",
+  "contact_name": "HR contact name if found, else empty string",
+  "role": "Contact's role/title if found, else empty string",
+  "email": "Email if found, else empty string",
+  "phone": "Phone if found, else empty string",
+  "employees_or_students": number or 0,
+  "notes": "Why this org is a hot lead — what job they posted, context",
+  "ai_score": number between 40-95,
+  "source_url": "MUST be a real direct URL to the job post on ${query.platform} — if you cannot find a real URL, omit this lead entirely",
+  "target_role": "${query.target_role}",
+  "job_title_hiring_for": "Exact job title from the posting",
+  "discovery_source": "${query.platform} job posting",
+  "discovery_query": "${query.q.replace(/"/g, '\\"')}"
 }
 
-CRITICAL:
-- source_url = the actual job post URL (e.g. naukri.com/job-listings/..., linkedin.com/jobs/view/...)
-- target_role always = "${queryObj.target_role}"
-- why_good_lead must mention the job title they're hiring for
-- Start [, end ]. No markdown. If no verified postings found: []`;
+Rules:
+- Only include leads with a REAL source_url (actual job post link)
+- ai_score: 85-95 if direct job post URL + contact info; 70-84 if job post URL only; 40-69 if indirect
+- Return [] if no valid leads found
+- Return ONLY the JSON array, no markdown, no explanation`;
 }
 
-function buildScoringPrompt(lead) {
-  return `Score this B2B lead for Cittaa Health Services (0-100).
-
-${lead.type} — ${lead.org_name}, ${lead.city}, ${lead.state}
-Size: ${lead.employees_or_students || 'unknown'} | Contract: Rs.${lead.estimated_annual_value_inr || 0}
-Target role: ${lead.target_role} | Contact: ${lead.contact_name || 'none'}
-Email: ${lead.email ? 'yes' : 'no'} | Phone: ${lead.phone ? 'yes' : 'no'}
-Source: ${lead.source_url ? 'verified' : 'unverified'}
-Reason: ${lead.why_good_lead || 'unknown'}
-
-Scoring:
-+30 South India (Telangana/AP/Karnataka/Tamil Nadu/Kerala)
-+15 special ed / autism / ADHD
-+15 no counsellor / actively seeking MH support
-+10 large (2000+ students or 500+ employees)
-+10 high value (Rs.5L+)
-+10 verified source URL
-+5 email or phone found
-+5 contact name found
--10 outside South India
--20 irrelevant to mental health
-
-Respond ONLY: {"score": <0-100>, "reasoning": "<one sentence>"}`;
+// ── deduplication helper ───────────────────────────────────────────────────
+function normalise(str) {
+  return (str || '').toLowerCase()
+    .replace(/pvt\.?\s*ltd\.?|private\s+limited|ltd\.?|inc\.?|llp|llc/gi, '')
+    .replace(/[^a-z0-9 ]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
-
-// ─── Parsers ──────────────────────────────────────────────────────────────────
-
-function parseLeadsFromResponse(text) {
-  if (!text) return [];
-  const clean = text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
-                    .replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
-  for (const s of [clean, text]) {
-    const si = s.indexOf('['), ei = s.lastIndexOf(']');
-    if (si !== -1 && ei > si) {
-      try { const p = JSON.parse(s.slice(si, ei + 1)); if (Array.isArray(p)) return p; } catch {}
-    }
-  }
-  const objs = []; const re = /\{[^{}]*"org_name"[^{}]*\}/g; let m;
-  while ((m = re.exec(clean)) !== null) { try { objs.push(JSON.parse(m[0])); } catch {} }
-  return objs;
-}
-
-function parseScore(text) {
-  if (!text) return { score: 50, reasoning: 'error' };
-  const clean = text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
-                    .replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
-  try { const s = clean.indexOf('{'), e = clean.lastIndexOf('}'); if (s !== -1) return JSON.parse(clean.slice(s, e + 1)); } catch {}
-  const m = clean.match(/"score"\s*:\s*(\d+)/);
-  return { score: m ? parseInt(m[1]) : 50, reasoning: 'extracted' };
-}
-
-// ─── Dedup ────────────────────────────────────────────────────────────────────
 
 async function isDuplicate(orgName) {
-  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-  const [q, l] = await Promise.all([
-    LeadQueue.find({ discovered_at: { $gte: since } }).select('org_name').lean(),
-    Lead.find({ created_at: { $gte: since } }).select('org_name').lean(),
-  ]);
-  const all = [...q, ...l].map(x => x.org_name.toLowerCase().trim());
-  const name = orgName.toLowerCase().trim();
-  return all.some(n => levenshtein.get(n, name) < 4);
+  try {
+    const norm = normalise(orgName);
+    const existing = await LeadQueue().find({
+      created_at: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
+    }).select('org_name').lean();
+    return existing.some(e => normalise(e.org_name) === norm);
+  } catch { return false; }
 }
 
-// ─── Run single query ─────────────────────────────────────────────────────────
+// ── save one lead to queue ─────────────────────────────────────────────────
+async function saveLead(raw, query) {
+  if (!raw.org_name || !raw.source_url) return null;     // must have real URL
+  if (await isDuplicate(raw.org_name)) return null;
 
-async function runQuery(queryObj) {
-  const searchModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash', tools: [{ googleSearch: {} }], generationConfig: { temperature: 0.2 } });
-  const extractModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash', generationConfig: { temperature: 0.1 } });
-  const scoreModel   = genAI.getGenerativeModel({ model: 'gemini-2.5-flash', generationConfig: { temperature: 0.1 } });
+  try {
+    const doc = await LeadQueue().create({
+      org_name:             raw.org_name.trim(),
+      type:                 raw.type || query.type,
+      city:                 raw.city || '',
+      state:                raw.state || '',
+      contact_name:         raw.contact_name || '',
+      role:                 raw.role || '',
+      email:                raw.email || '',
+      phone:                raw.phone || '',
+      employees_or_students: Number(raw.employees_or_students) || 0,
+      notes:                raw.notes || '',
+      ai_score:             Math.min(Math.max(Number(raw.ai_score) || 50, 0), 100),
+      source_url:           raw.source_url,
+      target_role:          raw.target_role || query.target_role,
+      job_title_hiring_for: raw.job_title_hiring_for || '',
+      discovery_source:     raw.discovery_source || `${query.platform} job posting`,
+      discovery_query:      raw.discovery_query || query.q,
+      status:               'pending',
+    });
+    return doc;
+  } catch (e) {
+    if (e.code === 11000) return null; // duplicate key
+    console.error('[Discovery] saveLead error:', e.message);
+    return null;
+  }
+}
 
-  console.log(`[Radar] Query → role:${queryObj.target_role} | region:${queryObj.region}`);
-  console.log(`[Radar]   "${queryObj.q.slice(0,80)}"`);
-
-  const sr = await searchModel.generateContent(buildSearchPrompt(queryObj));
-  const searchText = sr.response.text();
-  if (!searchText || searchText.length < 80) { console.log('[Radar] Empty result'); return []; }
-
-  const er = await extractModel.generateContent(buildExtractionPrompt(searchText, queryObj));
-  const rawLeads = parseLeadsFromResponse(er.response.text());
-  console.log(`[Radar] ${rawLeads.length} leads parsed`);
-
+// ── run one query through the Gemini pipeline ─────────────────────────────
+async function runQuery(query, genAI) {
   const saved = [];
-  for (const lead of rawLeads) {
-    if (!lead.org_name || lead.org_name.length < 3) continue;
-    if (!lead.source_url) { console.log(`[Radar] Skip (no source_url): ${lead.org_name}`); continue; }
-    if (await isDuplicate(lead.org_name)) { console.log(`[Radar] Duplicate: ${lead.org_name}`); continue; }
+  try {
+    // Step 1: grounded search
+    const searchModel = genAI.getGenerativeModel({
+      model: 'gemini-2.0-flash',
+      tools: [{ googleSearch: {} }],
+    });
+    const searchResult = await searchModel.generateContent(buildSearchPrompt(query));
+    const narrative = searchResult.response.text();
+    if (!narrative || narrative.length < 100) return saved;
 
-    const scr = await scoreModel.generateContent(buildScoringPrompt(lead));
-    const { score, reasoning } = parseScore(scr.response.text());
-    if (score < 30) { console.log(`[Radar] Low score (${score}): ${lead.org_name}`); continue; }
+    // Step 2: extract JSON
+    const extractModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const extractResult = await extractModel.generateContent(buildExtractionPrompt(narrative, query));
+    let raw = extractResult.response.text().trim();
 
-    try {
-      const item = await LeadQueue.create({
-        org_name: lead.org_name,
-        type: lead.type || 'corporate',
-        city: lead.city || null,
-        state: lead.state || null,
-        contact_name: lead.contact_name || null,
-        role: lead.role || null,
-        target_role: lead.target_role || queryObj.target_role,
-        job_title_hiring_for: lead.job_title_hiring_for || null,
-        email: lead.email || null,
-        phone: lead.phone || null,
-        employees_or_students: lead.employees_or_students || null,
-        estimated_value: lead.estimated_annual_value_inr || 0,
-        ai_score: score,
-        ai_reasoning: reasoning,
-        why_good_lead: lead.why_good_lead || null,
-        source_url: lead.source_url || null,
-        discovery_query: queryObj.q,
-        discovery_source: queryObj.platform ? `${queryObj.platform} job posting` : 'google_search',
-        status: 'pending',
-        discovered_at: new Date(),
-      });
-      saved.push(item);
-      console.log(`[Radar] Saved: ${lead.org_name} | score:${score} | role:${lead.target_role || queryObj.target_role}`);
-      console.log(`[Radar]   source: ${lead.source_url}`);
-    } catch (e) { if (e.code !== 11000) console.error('[Radar] Save error:', e.message); }
+    // Strip markdown fences if present
+    raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+
+    let leads;
+    try { leads = JSON.parse(raw); } catch { return saved; }
+    if (!Array.isArray(leads)) return saved;
+
+    for (const lead of leads.slice(0, 5)) {  // max 5 per query
+      const doc = await saveLead(lead, query);
+      if (doc) saved.push(doc);
+    }
+  } catch (e) {
+    console.error(`[Discovery] Query failed (${query.platform}/${query.type}):`, e.message);
   }
   return saved;
 }
 
-// ─── Full run ─────────────────────────────────────────────────────────────────
-
+// ── run a batch of queries ────────────────────────────────────────────────
 async function runDiscovery(batch) {
-  const queries = batch || QUERIES;
+  const genAI = getGemini();
+  if (!genAI) { console.warn('[Discovery] No GEMINI_API_KEY — skipping'); return []; }
+
   const allSaved = [];
-  console.log(`[Radar] Starting — ${queries.length} queries`);
-  for (const q of queries) {
-    try { const s = await runQuery(q); allSaved.push(...s); await new Promise(r => setTimeout(r, 4000)); }
-    catch (e) { console.error('[Radar] Query error:', e.message); }
+  for (const query of batch) {
+    console.log(`[Discovery] Querying ${query.platform} for ${query.type}s in ${query.region}…`);
+    const saved = await runQuery(query, genAI);
+    console.log(`[Discovery]   → ${saved.length} new lead(s) saved`);
+    allSaved.push(...saved);
+    await new Promise(r => setTimeout(r, 2000)); // rate-limit between queries
   }
-  try { await DiscoveryLog.create({ queries_run: queries.length, leads_found: allSaved.length, timestamp: new Date() }); } catch {}
-  if (allSaved.length > 0) sendRadarDiscoveryEmail(allSaved).catch(e => console.error('[Radar] Email:', e.message));
-  console.log(`[Radar] Done — ${allSaved.length} saved`);
+
+  // Log the run
+  try {
+    await DiscoveryLog().create({
+      queries_run: batch.length,
+      leads_found: allSaved.length,
+      ran_at: new Date(),
+    });
+  } catch {}
+
+  console.log(`[Discovery] Batch complete — ${allSaved.length} total new leads`);
   return allSaved;
 }
 
-// ─── Debug ────────────────────────────────────────────────────────────────────
-
+// ── test discovery — runs a balanced subset (1 school + 1 corporate + 1 other) ──
 async function runTestDiscovery() {
-  const q = QUERIES[0];
-  const sm = genAI.getGenerativeModel({ model: 'gemini-2.5-flash', tools: [{ googleSearch: {} }], generationConfig: { temperature: 0.2 } });
-  const em = genAI.getGenerativeModel({ model: 'gemini-2.5-flash', generationConfig: { temperature: 0.1 } });
-  const sr = await sm.generateContent(buildSearchPrompt(q));
-  const searchText = sr.response.text();
-  const er = await em.generateContent(buildExtractionPrompt(searchText, q));
-  const extractText = er.response.text();
-  return { query: q, raw_search: searchText.slice(0, 2000), raw_extract: extractText.slice(0, 2000), parsed: parseLeadsFromResponse(extractText) };
+  const subset = [
+    // 1 school query
+    QUERIES.find(q => q.type === 'school' && q.platform === 'Naukri'),
+    // 1 corporate query
+    QUERIES.find(q => q.type === 'corporate' && q.platform === 'Naukri'),
+    // 1 corporate LinkedIn
+    QUERIES.find(q => q.type === 'corporate' && q.platform === 'LinkedIn Jobs'),
+    // 1 school LinkedIn
+    QUERIES.find(q => q.type === 'school' && q.platform === 'LinkedIn Jobs'),
+  ].filter(Boolean);
+
+  return runDiscovery(subset);
 }
 
-// ─── Cron ─────────────────────────────────────────────────────────────────────
-
+// ── scheduled jobs ────────────────────────────────────────────────────────
 function startDiscoveryJobs() {
-  cron.schedule('0 */6 * * *', async () => {
-    const south = QUERIES.filter(q => ['Telangana','Karnataka','Tamil Nadu','Kerala','South India','AP'].some(r => q.region.includes(r)));
-    const rest  = QUERIES.filter(q => !south.includes(q));
-    const batch = [...south.sort(() => Math.random()-0.5).slice(0,3), ...rest.sort(() => Math.random()-0.5).slice(0,1)];
-    await runDiscovery(batch);
-  });
-  cron.schedule('0 1 * * 1', () => runDiscovery(QUERIES), { timezone: 'Asia/Kolkata' });
-  console.log('[Radar] Jobs scheduled (6h scan + Monday full scan)');
+  if (!cron) { console.warn('[Discovery] node-cron unavailable — skipping scheduled jobs'); return; }
+
+  try {
+    // Full run every Monday at 1 AM IST
+    cron.schedule('0 1 * * 1', () => {
+      console.log('[Discovery] Weekly full scan starting…');
+      runDiscovery(QUERIES).catch(e => console.error('[Discovery] Weekly scan error:', e.message));
+    }, { timezone: 'Asia/Kolkata' });
+
+    // Mid-week corporate-only run — Wednesday at 2 AM IST
+    cron.schedule('0 2 * * 3', () => {
+      const corporateQueries = QUERIES.filter(q => q.type === 'corporate');
+      console.log('[Discovery] Mid-week corporate scan starting…');
+      runDiscovery(corporateQueries).catch(e => console.error('[Discovery] Corporate scan error:', e.message));
+    }, { timezone: 'Asia/Kolkata' });
+
+    console.log('[Discovery] Scheduled jobs registered (Mon full scan, Wed corporate scan)');
+  } catch (e) {
+    console.error('[Discovery] Failed to register cron jobs:', e.message);
+  }
 }
 
-module.exports = { startDiscoveryJobs, runDiscovery, runTestDiscovery };
+module.exports = { startDiscoveryJobs, runDiscovery, runTestDiscovery, QUERIES };
