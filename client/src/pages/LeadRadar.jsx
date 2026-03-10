@@ -1,243 +1,441 @@
-import { useEffect, useState } from 'react';
-import { getRadarQueue, approveQueueItem, rejectQueueItem, getDiscoveryLogs, getRadarStats, triggerDiscovery } from '../utils/api';
-import { formatCurrency, formatRelative, scoreClass } from '../utils/helpers';
-import toast from 'react-hot-toast';
-import { Radar, Play, Check, X, RefreshCw } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
 
-const REVIEWER = 'S';
+const API = import.meta.env.VITE_API_URL || '';
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ── type colours ───────────────────────────────────────────────────────────
+const TYPE_COLOURS = {
+  school:    { bg: '#EEF2FF', border: '#818CF8', text: '#4338CA' },
+  corporate: { bg: '#F0F9FF', border: '#38BDF8', text: '#0369A1' },
+  clinic:    { bg: '#F0FDF4', border: '#4ADE80', text: '#166534' },
+  ngo:       { bg: '#FFFBEB', border: '#FCD34D', text: '#92400E' },
+  rehab:     { bg: '#FEF2F2', border: '#FCA5A5', text: '#991B1B' },
+  coaching:  { bg: '#FAF5FF', border: '#C084FC', text: '#6B21A8' },
+};
+function typeStyle(t) { return TYPE_COLOURS[t] || { bg: '#F8FAFC', border: '#CBD5E1', text: '#475569' }; }
+
+// ── helpers ────────────────────────────────────────────────────────────────
 function getTargetRole(item) {
   if (item.target_role) return item.target_role;
-  if (item.role) return item.role;
-  const d = {
-    school: 'Principal / Vice Principal / Counselling Coordinator',
-    coaching: 'Centre Director / Academic Head',
-    corporate: 'HR Head / CHRO / Wellness Manager',
-    clinic: 'Founder / Lead Psychologist / Director',
-    ngo: 'Programme Director / CEO',
-    rehab: 'Centre Director / Head Therapist',
+  const map = {
+    school:    'Principal / Vice Principal',
+    corporate: 'HR Manager / L&D Head',
+    clinic:    'Clinic Director',
+    ngo:       'Programme Director',
+    rehab:     'Centre Head',
+    coaching:  'Director / Owner',
   };
-  return d[item.type] || 'Decision Maker';
+  return map[item.type] || 'Decision Maker';
 }
 
 function shortUrl(url) {
   if (!url) return null;
-  try { return new URL(url).hostname.replace('www.', ''); } catch { return url.slice(0, 35); }
+  try { return new URL(url).hostname.replace('www.', ''); }
+  catch { return url.slice(0, 30); }
 }
 
-const TYPE_EMOJI = { school: '🏫', coaching: '📚', corporate: '🏢', clinic: '🧠', ngo: '🤝', rehab: '♿' };
+function scoreColour(score) {
+  if (score >= 80) return '#10B981';
+  if (score >= 60) return '#F59E0B';
+  return '#EF4444';
+}
 
+// ─────────────────────────────────────────────────────────────────────────
 export default function LeadRadar() {
-  const [queue, setQueue]           = useState([]);
-  const [stats, setStats]           = useState({});
-  const [tab, setTab]               = useState('pending');
-  const [loading, setLoading]       = useState(true);
-  const [triggering, setTriggering] = useState(false);
+  const [items, setItems]       = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [scanning, setScanning] = useState(false);
+  const [toast, setToast]       = useState(null);
+  const [filter, setFilter]     = useState('all');
+  const [approving, setApproving] = useState({});
+  const [contractModal, setContractModal] = useState(null); // { item, value }
 
-  const load = async () => {
+  // ── fetch queue ──────────────────────────────────────────────────────────
+  const fetchQueue = useCallback(async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      const [qRes, statsRes] = await Promise.all([getRadarQueue({ status: tab }), getRadarStats()]);
-      setQueue(qRes.items || []);
-      setStats(statsRes || {});
-    } catch (e) { toast.error(e.message); }
-    finally { setLoading(false); }
-  };
+      const r = await fetch(`${API}/api/radar?status=pending&limit=50`);
+      const data = await r.json();
+      setItems(data.items || []);
+    } catch (e) {
+      showToast('Failed to load radar queue', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  useEffect(() => { load(); }, [tab]);
+  useEffect(() => { fetchQueue(); }, [fetchQueue]);
 
-  const handleApprove = async (id) => {
-    try { await approveQueueItem(id, REVIEWER); toast.success('Lead approved & moved to Lead Hub!'); load(); }
-    catch (e) { toast.error(e.message); }
-  };
-  const handleReject = async (id) => {
-    try { await rejectQueueItem(id, REVIEWER); toast.success('Lead rejected'); load(); }
-    catch (e) { toast.error(e.message); }
-  };
-  const handleTrigger = async () => {
-    setTriggering(true);
-    try { await triggerDiscovery(); toast.success('Scanning job platforms… leads appear in a few minutes.'); }
-    catch (e) { toast.error(e.message); }
-    finally { setTimeout(() => setTriggering(false), 3000); }
-  };
+  // ── toast ────────────────────────────────────────────────────────────────
+  function showToast(msg, type = 'success') {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 4000);
+  }
 
+  // ── trigger scan ─────────────────────────────────────────────────────────
+  async function handleScan() {
+    setScanning(true);
+    showToast('Scanning job platforms… new leads will appear in 1-2 minutes', 'info');
+    try {
+      const r = await fetch(`${API}/api/radar/trigger`, { method: 'POST' });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Scan failed');
+      // Refresh after a short delay to catch new leads
+      setTimeout(fetchQueue, 8000);
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  // ── approve ──────────────────────────────────────────────────────────────
+  function openApprove(item) {
+    setContractModal({ item, value: item.contract_value || '' });
+  }
+
+  async function confirmApprove() {
+    const { item, value } = contractModal;
+    setContractModal(null);
+    setApproving(a => ({ ...a, [item._id]: true }));
+    try {
+      const r = await fetch(`${API}/api/radar/approve/${item._id}`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ contract_value: Number(value) || 0 }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Approve failed');
+      showToast(`✅ ${item.org_name} added to pipeline!`);
+      setItems(prev => prev.filter(i => i._id !== item._id));
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setApproving(a => ({ ...a, [item._id]: false }));
+    }
+  }
+
+  // ── reject ───────────────────────────────────────────────────────────────
+  async function handleReject(item) {
+    try {
+      await fetch(`${API}/api/radar/reject/${item._id}`, { method: 'POST' });
+      setItems(prev => prev.filter(i => i._id !== item._id));
+    } catch (e) {
+      showToast('Reject failed', 'error');
+    }
+  }
+
+  // ── filter ───────────────────────────────────────────────────────────────
+  const TYPES = ['all', 'school', 'corporate', 'clinic', 'ngo', 'rehab', 'coaching'];
+  const displayed = filter === 'all' ? items : items.filter(i => i.type === filter);
+
+  // ─────────────────────────────────────────────────────────────────────────
   return (
-    <div style={{ maxWidth: 900, margin: '0 auto', padding: '0 0 60px 0' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <Radar size={28} color="var(--purple)" />
-          <div>
-            <h1 style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--ink)', margin: 0 }}>Lead Radar</h1>
-            <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: 0 }}>
-              Finds companies actively hiring counsellors & wellness roles — on Naukri, LinkedIn, Indeed, Shine
-            </p>
-          </div>
+    <div style={{ padding: '28px 32px', maxWidth: 1100, margin: '0 auto' }}>
+
+      {/* ── header ── */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, color: '#1E293B' }}>
+            📡 Lead Radar
+          </h1>
+          <p style={{ margin: '6px 0 0', color: '#64748B', fontSize: 14 }}>
+            Organisations hiring counsellors / wellness roles — hot signals for Cittaa
+          </p>
         </div>
-        <button className="btn btn-primary" onClick={handleTrigger} disabled={triggering}
-          style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {triggering ? <RefreshCw size={16} className="spin" /> : <Play size={16} />}
-          {triggering ? 'Scanning...' : 'Scan Job Platforms'}
-        </button>
-      </div>
-
-      {/* Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginBottom: 24 }}>
-        {[
-          { label: 'Pending Review', value: stats.pending ?? '—', color: '#f59e0b' },
-          { label: 'Approved', value: stats.approved ?? '—', color: '#16a34a' },
-          { label: 'Rejected', value: stats.rejected ?? '—', color: '#dc2626' },
-        ].map(s => (
-          <div key={s.label} className="card" style={{ textAlign: 'center', padding: '14px 10px' }}>
-            <div style={{ fontSize: '1.8rem', fontWeight: 800, color: s.color }}>{s.value}</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>{s.label}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Tabs */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-        {['pending', 'approved', 'rejected'].map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            className={tab === t ? 'btn btn-primary' : 'btn btn-ghost'}
-            style={{ textTransform: 'capitalize', fontSize: '0.85rem' }}>
-            {t}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <span style={{ fontSize: 13, color: '#64748B' }}>{displayed.length} lead{displayed.length !== 1 ? 's' : ''}</span>
+          <button
+            onClick={fetchQueue}
+            style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid #E2E8F0', background: '#fff', color: '#475569', cursor: 'pointer', fontSize: 13 }}
+          >
+            ↻ Refresh
           </button>
-        ))}
+          <button
+            onClick={handleScan}
+            disabled={scanning}
+            style={{
+              padding: '10px 20px', borderRadius: 10, border: 'none',
+              background: scanning ? '#94A3B8' : 'linear-gradient(135deg,#4F46E5,#7C3AED)',
+              color: '#fff', fontWeight: 600, fontSize: 14, cursor: scanning ? 'not-allowed' : 'pointer',
+              boxShadow: scanning ? 'none' : '0 4px 14px rgba(79,70,229,0.35)',
+              display: 'flex', alignItems: 'center', gap: 8,
+            }}
+          >
+            {scanning ? '⏳ Scanning…' : '🔍 Scan Job Platforms'}
+          </button>
+        </div>
       </div>
 
-      {/* Cards */}
-      {loading ? (
-        <div style={{ textAlign: 'center', padding: 60 }}><div className="spinner" style={{ margin: '0 auto' }} /></div>
-      ) : queue.length === 0 ? (
-        <div className="card" style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>
-          <Radar size={40} style={{ marginBottom: 12, opacity: 0.3 }} />
-          <p>{tab === 'pending' ? 'No pending leads. Click "Scan Job Platforms" to find companies hiring counsellors.' : `No ${tab} leads yet.`}</p>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {queue.map(item => (
-            <RadarCard key={item._id} item={item} showActions={tab === 'pending'} onApprove={handleApprove} onReject={handleReject} />
-          ))}
+      {/* ── type filter tabs ── */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 24, flexWrap: 'wrap' }}>
+        {TYPES.map(t => {
+          const active = filter === t;
+          const s = t !== 'all' ? typeStyle(t) : null;
+          return (
+            <button
+              key={t}
+              onClick={() => setFilter(t)}
+              style={{
+                padding: '6px 14px', borderRadius: 20, border: `1px solid ${active ? (s?.border || '#4F46E5') : '#E2E8F0'}`,
+                background: active ? (s?.bg || '#EEF2FF') : '#fff',
+                color: active ? (s?.text || '#4338CA') : '#64748B',
+                fontWeight: active ? 600 : 400,
+                fontSize: 13, cursor: 'pointer', textTransform: 'capitalize',
+              }}
+            >
+              {t}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── loading ── */}
+      {loading && (
+        <div style={{ textAlign: 'center', padding: 60, color: '#94A3B8' }}>
+          <div style={{ fontSize: 36, marginBottom: 12 }}>⚙️</div>
+          <p>Loading radar queue…</p>
         </div>
       )}
-    </div>
-  );
-}
 
-// ─── Card ─────────────────────────────────────────────────────────────────────
-function RadarCard({ item, showActions, onApprove, onReject }) {
-  const emoji = TYPE_EMOJI[item.type] || '🏢';
-  const targetRole = getTargetRole(item);
-  const sourceHost = shortUrl(item.source_url);
-
-  return (
-    <div className="card" style={{ position: 'relative', padding: '18px 20px' }}>
-      {/* Score */}
-      <div style={{
-        position: 'absolute', top: 14, right: 16,
-        background: item.ai_score >= 70 ? '#22c55e' : item.ai_score >= 45 ? '#f59e0b' : '#ef4444',
-        color: '#fff', borderRadius: 20, padding: '3px 10px', fontSize: '0.78rem', fontWeight: 700,
-      }}>
-        {item.ai_score}/100
-      </div>
-
-      {/* Org name */}
-      <div style={{ fontWeight: 800, fontSize: '1.05rem', marginBottom: 2, paddingRight: 60, color: 'var(--ink)' }}>
-        {emoji} {item.org_name}
-      </div>
-      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: 10 }}>
-        <span style={{ textTransform: 'capitalize', fontWeight: 600 }}>{item.type}</span>
-        {item.city && <span> · 📍 {item.city}{item.state ? `, ${item.state}` : ''}</span>}
-        {item.employees_or_students && (
-          <span> · 👥 {item.employees_or_students.toLocaleString('en-IN')} {item.type === 'school' ? 'students' : 'employees'}</span>
-        )}
-      </div>
-
-      {/* ① JOB POSTING SIGNAL — the reason this lead exists */}
-      <div style={{
-        background: '#ecfdf5', border: '1px solid #6ee7b7',
-        borderLeft: '4px solid #059669', borderRadius: '0 8px 8px 0',
-        padding: '9px 13px', marginBottom: 8,
-      }}>
-        <div style={{ fontSize: '0.68rem', color: '#065f46', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 3 }}>
-          📋 Job Posting Signal
+      {/* ── empty ── */}
+      {!loading && displayed.length === 0 && (
+        <div style={{ textAlign: 'center', padding: 80, background: '#F8FAFC', borderRadius: 16, border: '1px dashed #E2E8F0' }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>📡</div>
+          <h3 style={{ margin: 0, color: '#1E293B' }}>No leads in queue</h3>
+          <p style={{ color: '#64748B', marginTop: 8 }}>Click "Scan Job Platforms" to discover organisations hiring counsellors / wellness staff.</p>
         </div>
-        {item.job_title_hiring_for ? (
-          <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#064e3b' }}>
-            Hiring: <span style={{ color: '#059669' }}>"{item.job_title_hiring_for}"</span>
-          </div>
-        ) : (
-          <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#064e3b' }}>
-            {item.why_good_lead || 'Actively hiring for mental health / counselling role'}
-          </div>
-        )}
-        {item.discovery_source && (
-          <div style={{ fontSize: '0.73rem', color: '#555', marginTop: 3 }}>
-            📌 Source: <strong>{item.discovery_source}</strong>
-          </div>
-        )}
-        {item.source_url ? (
-          <a href={item.source_url} target="_blank" rel="noreferrer" style={{ fontSize: '0.73rem', color: '#059669', fontWeight: 600, textDecoration: 'underline', display: 'block', marginTop: 3 }}>
-            🔗 View job post → {sourceHost}
-          </a>
-        ) : (
-          item.discovery_query && (
-            <div style={{ fontSize: '0.71rem', color: '#666', fontStyle: 'italic', marginTop: 3 }}>
-              🔍 "{item.discovery_query.slice(0, 80)}{item.discovery_query.length > 80 ? '…' : ''}"
+      )}
+
+      {/* ── lead cards ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px,1fr))', gap: 20 }}>
+        {displayed.map(item => {
+          const ts = typeStyle(item.type);
+          const score = item.ai_score || 50;
+          const targetRole = getTargetRole(item);
+          const domain = shortUrl(item.source_url);
+
+          return (
+            <div
+              key={item._id}
+              style={{
+                background: '#fff', borderRadius: 16,
+                border: `1.5px solid ${ts.border}`,
+                boxShadow: '0 2px 12px rgba(0,0,0,0.06)',
+                overflow: 'hidden',
+                opacity: approving[item._id] ? 0.6 : 1,
+                transition: 'opacity 0.2s',
+              }}
+            >
+              {/* card header */}
+              <div style={{ background: ts.bg, padding: '16px 18px', borderBottom: `1px solid ${ts.border}` }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{
+                      fontSize: 11, fontWeight: 700, color: ts.text,
+                      textTransform: 'uppercase', letterSpacing: '0.05em',
+                    }}>
+                      {item.type || 'lead'}
+                    </span>
+                    <h3 style={{ margin: '4px 0 0', fontSize: 16, fontWeight: 700, color: '#1E293B', lineHeight: 1.3 }}>
+                      {item.org_name}
+                    </h3>
+                    <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748B' }}>
+                      📍 {[item.city, item.state].filter(Boolean).join(', ') || 'India'}
+                    </p>
+                  </div>
+                  <div style={{
+                    width: 44, height: 44, borderRadius: '50%',
+                    background: scoreColour(score) + '20',
+                    border: `2px solid ${scoreColour(score)}`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    flexShrink: 0, marginLeft: 10,
+                  }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: scoreColour(score) }}>{score}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* card body */}
+              <div style={{ padding: '14px 18px' }}>
+
+                {/* Job posting signal */}
+                {(item.job_title_hiring_for || item.discovery_source) && (
+                  <div style={{
+                    background: '#F0FDF4', border: '1px solid #BBF7D0',
+                    borderRadius: 10, padding: '10px 14px', marginBottom: 12,
+                  }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#166534', marginBottom: 6, textTransform: 'uppercase' }}>
+                      📋 Job Posting Signal
+                    </div>
+                    {item.job_title_hiring_for && (
+                      <div style={{ fontSize: 13, color: '#15803D', fontWeight: 600 }}>
+                        Hiring: "{item.job_title_hiring_for}"
+                      </div>
+                    )}
+                    {item.discovery_source && (
+                      <div style={{ fontSize: 12, color: '#4ADE80', marginTop: 2 }}>
+                        Source: {item.discovery_source}
+                      </div>
+                    )}
+                    {domain && (
+                      <a
+                        href={item.source_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ fontSize: 12, color: '#166534', display: 'inline-block', marginTop: 4 }}
+                      >
+                        🔗 View job post → {domain}
+                      </a>
+                    )}
+                  </div>
+                )}
+
+                {/* Target role */}
+                <div style={{
+                  background: '#F5F3FF', border: '1px solid #DDD6FE',
+                  borderRadius: 10, padding: '8px 14px', marginBottom: 12,
+                }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#6D28D9', textTransform: 'uppercase' }}>🎯 Role to Approach</span>
+                  <div style={{ fontSize: 13, color: '#7C3AED', fontWeight: 600, marginTop: 2 }}>{targetRole}</div>
+                </div>
+
+                {/* Contact info */}
+                {item.contact_name && (
+                  <div style={{ fontSize: 13, color: '#475569', marginBottom: 8 }}>
+                    <span style={{ fontWeight: 600 }}>👤 {item.contact_name}</span>
+                    {item.role && <span style={{ color: '#94A3B8' }}> · {item.role}</span>}
+                  </div>
+                )}
+                {item.email && (
+                  <div style={{ fontSize: 13, color: '#475569', marginBottom: 4 }}>📧 {item.email}</div>
+                )}
+                {item.phone && (
+                  <div style={{ fontSize: 13, color: '#475569', marginBottom: 4 }}>📞 {item.phone}</div>
+                )}
+                {item.employees_or_students > 0 && (
+                  <div style={{ fontSize: 13, color: '#475569', marginBottom: 4 }}>
+                    👥 {item.employees_or_students.toLocaleString()} employees/students
+                  </div>
+                )}
+
+                {/* Notes */}
+                {item.notes && (
+                  <p style={{
+                    margin: '10px 0 0', fontSize: 12, color: '#64748B',
+                    lineHeight: 1.5, borderTop: '1px solid #F1F5F9', paddingTop: 10,
+                  }}>
+                    {item.notes}
+                  </p>
+                )}
+              </div>
+
+              {/* card actions */}
+              <div style={{ padding: '12px 18px', borderTop: '1px solid #F1F5F9', display: 'flex', gap: 10 }}>
+                <button
+                  onClick={() => handleReject(item)}
+                  style={{
+                    flex: 1, padding: '9px 0', borderRadius: 9,
+                    border: '1px solid #E2E8F0', background: '#fff',
+                    color: '#EF4444', fontWeight: 600, fontSize: 13, cursor: 'pointer',
+                  }}
+                >
+                  ✕ Skip
+                </button>
+                <button
+                  onClick={() => openApprove(item)}
+                  disabled={!!approving[item._id]}
+                  style={{
+                    flex: 2, padding: '9px 0', borderRadius: 9, border: 'none',
+                    background: approving[item._id]
+                      ? '#94A3B8'
+                      : 'linear-gradient(135deg,#10B981,#059669)',
+                    color: '#fff', fontWeight: 700, fontSize: 13,
+                    cursor: approving[item._id] ? 'not-allowed' : 'pointer',
+                    boxShadow: '0 2px 8px rgba(16,185,129,0.3)',
+                  }}
+                >
+                  {approving[item._id] ? 'Adding…' : '✓ Add to Pipeline'}
+                </button>
+              </div>
             </div>
-          )
-        )}
+          );
+        })}
       </div>
 
-      {/* ② TARGET ROLE — who to call */}
-      <div style={{
-        background: '#f4f0fd', borderLeft: '3px solid var(--purple)',
-        borderRadius: '0 6px 6px 0', padding: '8px 12px', marginBottom: 8,
-      }}>
-        <div style={{ fontSize: '0.68rem', color: 'var(--purple)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-          🎯 Role to Approach
-        </div>
-        <div style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--ink)', marginTop: 2 }}>
-          {targetRole}
-        </div>
-        {item.contact_name && (
-          <div style={{ fontSize: '0.78rem', color: '#555', marginTop: 3 }}>
-            👤 Found: {item.contact_name}{item.role && item.role !== item.target_role ? ` · ${item.role}` : ''}
+      {/* ── Contract value modal ── */}
+      {contractModal && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }}>
+          <div style={{
+            background: '#fff', borderRadius: 16, padding: 32,
+            width: 380, boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
+          }}>
+            <h3 style={{ margin: '0 0 6px', fontSize: 18, color: '#1E293B' }}>
+              Add to Pipeline
+            </h3>
+            <p style={{ margin: '0 0 20px', color: '#64748B', fontSize: 14 }}>
+              {contractModal.item.org_name}
+            </p>
+
+            <label style={{ fontSize: 13, fontWeight: 600, color: '#475569' }}>
+              Estimated Contract Value (₹)
+            </label>
+            <input
+              type="number"
+              placeholder="e.g. 250000"
+              value={contractModal.value}
+              onChange={e => setContractModal(m => ({ ...m, value: e.target.value }))}
+              style={{
+                width: '100%', marginTop: 8, padding: '10px 14px',
+                border: '1.5px solid #E2E8F0', borderRadius: 9,
+                fontSize: 15, outline: 'none', boxSizing: 'border-box',
+              }}
+              autoFocus
+              onKeyDown={e => { if (e.key === 'Enter') confirmApprove(); if (e.key === 'Escape') setContractModal(null); }}
+            />
+
+            <div style={{ display: 'flex', gap: 12, marginTop: 20 }}>
+              <button
+                onClick={() => setContractModal(null)}
+                style={{
+                  flex: 1, padding: '11px 0', borderRadius: 9,
+                  border: '1px solid #E2E8F0', background: '#fff',
+                  color: '#64748B', fontWeight: 600, cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmApprove}
+                style={{
+                  flex: 2, padding: '11px 0', borderRadius: 9, border: 'none',
+                  background: 'linear-gradient(135deg,#10B981,#059669)',
+                  color: '#fff', fontWeight: 700, cursor: 'pointer',
+                }}
+              >
+                ✓ Confirm & Add
+              </button>
+            </div>
           </div>
-        )}
-        {item.email && <div style={{ fontSize: '0.78rem', color: '#555', marginTop: 1 }}>📧 {item.email}</div>}
-        {item.phone && <div style={{ fontSize: '0.78rem', color: '#555', marginTop: 1 }}>📞 {item.phone}</div>}
-      </div>
-
-      {/* AI score reason */}
-      {item.ai_reasoning && (
-        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 8, fontStyle: 'italic' }}>
-          AI: {item.ai_reasoning}
         </div>
       )}
 
-      {/* Est. value */}
-      {item.estimated_value > 0 && (
-        <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--purple)', marginBottom: 10 }}>
-          💰 Est. {formatCurrency(item.estimated_value)} / year
-        </div>
-      )}
-
-      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: showActions ? 14 : 0 }}>
-        Discovered {formatRelative(item.discovered_at)}
-        {item.status !== 'pending' && ` · ${item.status} by ${item.reviewed_by}`}
-      </div>
-
-      {showActions && (
-        <div style={{ display: 'flex', gap: 10 }}>
-          <button className="btn btn-success" style={{ flex: 1 }} onClick={() => onApprove(item._id)}>
-            <Check size={15} /> Approve → Lead Hub
-          </button>
-          <button className="btn btn-danger" style={{ flex: 1 }} onClick={() => onReject(item._id)}>
-            <X size={15} /> Reject
-          </button>
+      {/* ── toast ── */}
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 24, right: 24,
+          padding: '14px 22px', borderRadius: 12,
+          background: toast.type === 'error' ? '#FEF2F2'
+                    : toast.type === 'info'  ? '#EFF6FF' : '#F0FDF4',
+          border: `1px solid ${toast.type === 'error' ? '#FCA5A5' : toast.type === 'info' ? '#BAE6FD' : '#BBF7D0'}`,
+          color: toast.type === 'error' ? '#991B1B' : toast.type === 'info' ? '#1E40AF' : '#166534',
+          fontWeight: 500, fontSize: 14, zIndex: 9999,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+          maxWidth: 380,
+        }}>
+          {toast.msg}
         </div>
       )}
     </div>
