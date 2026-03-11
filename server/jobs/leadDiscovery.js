@@ -102,6 +102,108 @@ const QUERIES = [
   { q: 'site:shine.com "corporate counsellor" OR "EAP" OR "employee wellbeing" counsellor India 2025',
     target_role: 'HR Manager / L&D Head', type: 'corporate', region: 'Pan India', platform: 'Shine' },
 
+  // ══════════════════════════════════════════════════════════════
+  // FACEBOOK HIRING POSTS
+  // School admins and HR teams post vacancies in FB groups/pages.
+  // Often the only digital trace for smaller tier-2/3 city schools.
+  // ══════════════════════════════════════════════════════════════
+  { q: 'site:facebook.com school "counsellor vacancy" OR "hiring counsellor" OR "school counsellor" India 2025',
+    target_role: 'Principal / Vice Principal', type: 'school', region: 'Pan India', platform: 'Facebook' },
+  { q: 'site:facebook.com "we are hiring" "counsellor" school OR college India 2025',
+    target_role: 'Principal / Vice Principal', type: 'school', region: 'Pan India', platform: 'Facebook' },
+  { q: 'site:facebook.com "EAP counsellor" OR "employee wellness" OR "corporate counsellor" vacancy India 2025',
+    target_role: 'CHRO / HR Director', type: 'corporate', region: 'Pan India', platform: 'Facebook' },
+
+  // ══════════════════════════════════════════════════════════════
+  // TWITTER / X VACANCY TWEETS
+  // HR professionals and school admins tweet vacancies with
+  // hashtags like #CounsellorJobs #Hiring #JobAlert
+  // ══════════════════════════════════════════════════════════════
+  { q: 'site:twitter.com "school counsellor" vacancy OR hiring India 2025 #CounsellorJobs OR #JobAlert',
+    target_role: 'Principal / Vice Principal', type: 'school', region: 'Pan India', platform: 'Twitter/X' },
+  { q: 'site:twitter.com "EAP counsellor" OR "corporate wellness" hiring India 2025 #HRJobs OR #Hiring',
+    target_role: 'CHRO / HR Director', type: 'corporate', region: 'Pan India', platform: 'Twitter/X' },
+
+  // ══════════════════════════════════════════════════════════════
+  // FOUNDIT (Monster India) & INTERNSHALA
+  // Foundit catches mid-size orgs; Internshala catches NGOs,
+  // smaller schools and coaching institutes not on Naukri.
+  // ══════════════════════════════════════════════════════════════
+  { q: 'site:foundit.in "school counsellor" OR "student counsellor" India 2025',
+    target_role: 'Principal / Vice Principal', type: 'school', region: 'Pan India', platform: 'Foundit' },
+  { q: 'site:foundit.in "EAP counsellor" OR "employee wellness" OR "corporate counsellor" India 2025',
+    target_role: 'HR Manager / L&D Head', type: 'corporate', region: 'Pan India', platform: 'Foundit' },
+  { q: 'site:internshala.com "counsellor" school OR college OR NGO India 2025',
+    target_role: 'Director / Principal', type: 'school', region: 'Pan India', platform: 'Internshala' },
+
+  // ══════════════════════════════════════════════════════════════
+  // GOVERNMENT PORTALS
+  // Govt schools (Sainik, Kendriya Vidyalaya, Navodaya, state govt)
+  // post counsellor vacancies on official portals — zero competition,
+  // high contract value, long tenure.
+  // ══════════════════════════════════════════════════════════════
+  { q: 'site:gem.gov.in "counselling" OR "mental health" school services 2025',
+    target_role: 'Principal / Welfare Officer', type: 'school', region: 'Pan India', platform: 'GeM Portal' },
+  { q: '"Kendriya Vidyalaya" OR "Navodaya Vidyalaya" OR "Sainik School" counsellor vacancy recruitment 2025',
+    target_role: 'Principal / Vice Principal', type: 'school', region: 'Pan India', platform: 'Govt Portal' },
+  { q: 'site:sarkariresult.com OR site:govtjobguru.in "school counsellor" OR "counsellor" recruitment 2025',
+    target_role: 'Principal / Vice Principal', type: 'school', region: 'Pan India', platform: 'Govt Portal' },
+  { q: '"state government" school counsellor recruitment 2025 Telangana OR Karnataka OR Tamil Nadu OR Maharashtra',
+    target_role: 'District Education Officer / Principal', type: 'school', region: 'South India', platform: 'Govt Portal' },
+
+  // ══════════════════════════════════════════════════════════════
+  // NEWS-BASED INTENT SIGNALS
+  // Companies in the news for launching wellness programs,
+  // signing EAP partnerships, or winning mental health awards
+  // are actively INVESTING — perfect time to reach them.
+  // ══════════════════════════════════════════════════════════════
+  { q: 'site:economictimes.com OR site:livemint.com "employee mental health" OR "workplace wellness" program launch India 2025',
+    target_role: 'CHRO / VP People', type: 'corporate', region: 'Pan India', platform: 'News Signal' },
+  { q: 'site:businessline.com OR site:thehindu.com "EAP" OR "employee assistance programme" India company 2025',
+    target_role: 'CHRO / HR Director', type: 'corporate', region: 'Pan India', platform: 'News Signal' },
+  { q: '"mental health" "employee wellbeing" initiative launched OR announced India company 2025',
+    target_role: 'CHRO / VP People', type: 'corporate', region: 'Pan India', platform: 'News Signal' },
+
+  // ══════════════════════════════════════════════════════════════
+  // GREAT PLACE TO WORK & BEST EMPLOYER SIGNALS
+  // Companies certified as "Great Place to Work" or winning
+  // "Best Employer" awards invest heavily in employee wellbeing.
+  // They have budget AND motivation — ideal Cittaa customers.
+  // ══════════════════════════════════════════════════════════════
+  { q: '"Great Place to Work" certified India 2025 company employees mental health OR wellness',
+    target_role: 'CHRO / HR Director', type: 'corporate', region: 'Pan India', platform: 'GPTW Signal' },
+  { q: '"Best Employer" OR "Top Employer" award India 2025 employee wellbeing OR mental health',
+    target_role: 'CHRO / VP People', type: 'corporate', region: 'Pan India', platform: 'GPTW Signal' },
+
+  // ══════════════════════════════════════════════════════════════
+  // HIGH EMPLOYEE STRESS SIGNALS (Glassdoor / Ambitionbox)
+  // Companies with negative mental health reviews are in urgent
+  // need — employees are vocal about burnout and poor support.
+  // ══════════════════════════════════════════════════════════════
+  { q: 'site:glassdoor.com OR site:ambitionbox.com "mental health" "no support" OR "burnout" OR "high stress" India company 2025',
+    target_role: 'CHRO / HR Director', type: 'corporate', region: 'Pan India', platform: 'Glassdoor Signal' },
+
+  // ══════════════════════════════════════════════════════════════
+  // FRESHLY FUNDED STARTUPS
+  // Post-funding companies aggressively hire and scale culture —
+  // employee count spikes, stress spikes, EAP becomes urgent.
+  // ══════════════════════════════════════════════════════════════
+  { q: '"Series A" OR "Series B" OR "Series C" funding India startup 2025 employees "mental health" OR "HR" OR "people team"',
+    target_role: 'CHRO / Head of People', type: 'corporate', region: 'Pan India', platform: 'Funding Signal' },
+  { q: 'site:yourstory.com OR site:inc42.com raised funding India startup 2025 employees 100 OR 200 OR 500',
+    target_role: 'CHRO / Head of People', type: 'corporate', region: 'Pan India', platform: 'Funding Signal' },
+
+  // ══════════════════════════════════════════════════════════════
+  // SCHOOL CBSE / NAAC ACCREDITATION SIGNALS
+  // Schools getting fresh CBSE/ICSE affiliation need to build
+  // student wellness infrastructure from scratch — no existing
+  // vendor, receptive to a first-mover pitch.
+  // ══════════════════════════════════════════════════════════════
+  { q: '"CBSE affiliation" OR "ICSE affiliation" new school 2024 2025 India counsellor wellness',
+    target_role: 'Principal / Director', type: 'school', region: 'Pan India', platform: 'Affiliation Signal' },
+  { q: 'new school opened OR inaugurated 2024 2025 India CBSE OR ICSE OR IB counsellor',
+    target_role: 'Principal / Director', type: 'school', region: 'Pan India', platform: 'Affiliation Signal' },
+
   // ── CLINICS / REHAB / NGO / COACHING ─────────────────────────────────────
   { q: 'site:naukri.com "clinical counsellor" OR "counselling psychologist" hospital clinic India 2025',
     target_role: 'Medical Director / Clinic Head', type: 'clinic', region: 'Pan India', platform: 'Naukri' },
@@ -117,7 +219,82 @@ const QUERIES = [
     target_role: 'Director / Academic Head', type: 'coaching', region: 'Pan India', platform: 'Indeed' },
 ];
 
+const SIGNAL_PLATFORMS = ['News Signal', 'GPTW Signal', 'Glassdoor Signal', 'Funding Signal', 'Affiliation Signal'];
+const SOCIAL_PLATFORMS = ['Instagram', 'Facebook', 'Twitter/X'];
+const GOVT_PLATFORMS   = ['GeM Portal', 'Govt Portal'];
+
 function buildSearchPrompt(query) {
+  // ── Intent / news signals ────────────────────────────────────────────────
+  if (SIGNAL_PLATFORMS.includes(query.platform)) {
+    const intentMap = {
+      'News Signal':        'launching employee wellness / mental health programs',
+      'GPTW Signal':        'certified as great places to work — they actively invest in employee wellbeing',
+      'Glassdoor Signal':   'receiving negative mental health reviews — employees citing burnout, no support',
+      'Funding Signal':     'recently funded and rapidly scaling headcount — EAP becomes urgent at scale',
+      'Affiliation Signal': 'newly accredited or opened schools that need to build student wellness from scratch',
+    };
+    return `You are a B2B sales intelligence agent for Cittaa, an AI mental health platform for organisations.
+
+Find organisations that are ${intentMap[query.platform] || 'showing strong buying intent for mental health services'}.
+
+Search for: "${query.q}"
+
+For each organisation you find, extract:
+1. Organisation name and location (city, state)
+2. Why they are a hot lead — what signal was found (news story, award, review, funding round, affiliation)
+3. A direct URL to the source (news article, Glassdoor page, funding announcement, etc.)
+4. Company/school size if mentioned
+5. Any contact information visible (website, LinkedIn, email)
+
+Focus on REAL organisations with VERIFIABLE signals — include the source URL.
+
+Region: ${query.region}
+Decision maker to approach: ${query.target_role}`;
+  }
+
+  // ── Government portals ───────────────────────────────────────────────────
+  if (GOVT_PLATFORMS.includes(query.platform)) {
+    return `You are a B2B sales intelligence agent for Cittaa, an AI mental health platform for organisations.
+
+Government schools (Kendriya Vidyalaya, Navodaya Vidyalaya, Sainik Schools, state govt schools) post counsellor vacancies on official government portals. These are zero-competition, high-value, long-tenure contracts.
+
+Search for: "${query.q}"
+
+For each government school counsellor vacancy you find, extract:
+1. The school/institution name and location
+2. The exact post advertised (counsellor, psychologist, welfare officer)
+3. A direct URL to the recruitment notification or portal listing
+4. Contact details (address, email, phone) if in the notification
+5. Pay scale / salary if mentioned
+6. Application deadline if mentioned
+
+Region: ${query.region}
+Decision maker to approach: ${query.target_role}`;
+  }
+
+  // ── Social media (Facebook, Twitter/X) ──────────────────────────────────
+  if (SOCIAL_PLATFORMS.includes(query.platform)) {
+    const platform = query.platform;
+    return `You are a B2B sales intelligence agent for Cittaa, an AI mental health platform for organisations.
+
+Schools and companies post counsellor vacancy announcements on ${platform} — often with full details that don't appear anywhere else.
+
+Search for: "${query.q}"
+
+For each hiring post you find on ${platform}, extract:
+1. The organisation's name and city/state
+2. The role they are hiring for
+3. The ${platform} post or profile URL
+4. Contact info in the post or bio (email, phone, website)
+5. Any salary, qualification, or deadline details mentioned
+
+Focus on REAL organisations — not job aggregator accounts resharing.
+The source_url must be a real ${platform} link.
+
+Region: ${query.region}
+Decision maker to approach: ${query.target_role}`;
+  }
+
   if (query.platform === 'LinkedIn Posts') {
     return `You are a B2B sales intelligence agent for Cittaa, an AI mental health platform for organisations.
 
@@ -182,12 +359,28 @@ Decision maker to approach: ${query.target_role}`;
 }
 
 function buildExtractionPrompt(text, query) {
-  const isIG = query.platform === 'Instagram';
-  const isLIPost = query.platform === 'LinkedIn Posts';
-  const urlNote = isIG      ? 'must be an instagram.com link (post or profile). Omit lead if no real IG URL.'
-                : isLIPost  ? 'must be a linkedin.com/posts/... link. Omit lead if no real post URL.'
-                : `must be a direct URL to the job post on ${query.platform}. Omit lead if no real URL.`;
-  const sourceLabel = isIG ? 'Instagram hiring post' : isLIPost ? 'LinkedIn post' : `${query.platform} job posting`;
+  const isIG      = query.platform === 'Instagram';
+  const isLIPost  = query.platform === 'LinkedIn Posts';
+  const isFB      = query.platform === 'Facebook';
+  const isTwitter = query.platform === 'Twitter/X';
+  const isSignal  = SIGNAL_PLATFORMS.includes(query.platform);
+  const isGovt    = GOVT_PLATFORMS.includes(query.platform);
+
+  const urlNote = isIG      ? 'must be an instagram.com link. Omit if no real IG URL.'
+                : isLIPost  ? 'must be a linkedin.com/posts/... link. Omit if no real post URL.'
+                : isFB      ? 'must be a facebook.com link. Omit if no real FB URL.'
+                : isTwitter ? 'must be a twitter.com or x.com link. Omit if no real tweet URL.'
+                : isSignal  ? 'must be a URL to the news article, Glassdoor page, funding announcement, or award page. Omit if no real URL.'
+                : isGovt    ? 'must be a URL to the official recruitment notification or govt portal page. Omit if no real URL.'
+                : `must be a direct URL to the job post on ${query.platform}. Omit if no real URL.`;
+
+  const sourceLabel = isIG      ? 'Instagram hiring post'
+                    : isLIPost  ? 'LinkedIn post'
+                    : isFB      ? 'Facebook hiring post'
+                    : isTwitter ? 'Twitter/X hiring post'
+                    : isGovt    ? 'Government recruitment portal'
+                    : isSignal  ? `${query.platform.replace(' Signal', '').toLowerCase()} signal`
+                    : `${query.platform} job posting`;
 
   return `Extract leads from this data. Return ONLY a valid JSON array.
 
@@ -311,16 +504,23 @@ async function runDiscovery(batch) {
   return all;
 }
 
-// Balanced test set — one query per major platform per segment
+// Balanced test set — one query per major source type
 async function runTestDiscovery() {
   const subset = [
+    // Job boards
     QUERIES.find(q => q.type === 'school'    && q.platform === 'Naukri'),
-    QUERIES.find(q => q.type === 'school'    && q.platform === 'LinkedIn Jobs'),
-    QUERIES.find(q => q.type === 'school'    && q.platform === 'LinkedIn Posts'),   // organic posts
-    QUERIES.find(q => q.type === 'school'    && q.platform === 'Instagram'),
     QUERIES.find(q => q.type === 'corporate' && q.platform === 'Naukri'),
     QUERIES.find(q => q.type === 'corporate' && q.platform === 'LinkedIn Jobs'),
-    QUERIES.find(q => q.type === 'corporate' && q.platform === 'LinkedIn Posts'),   // organic posts
+    // Organic social posts
+    QUERIES.find(q => q.type === 'school'    && q.platform === 'LinkedIn Posts'),
+    QUERIES.find(q => q.type === 'school'    && q.platform === 'Instagram'),
+    QUERIES.find(q => q.type === 'school'    && q.platform === 'Facebook'),
+    // Intent signals
+    QUERIES.find(q => q.platform === 'News Signal'),
+    QUERIES.find(q => q.platform === 'Funding Signal'),
+    QUERIES.find(q => q.platform === 'GPTW Signal'),
+    // Govt
+    QUERIES.find(q => q.platform === 'Govt Portal'),
   ].filter(Boolean);
   return runDiscovery(subset);
 }
@@ -328,10 +528,15 @@ async function runTestDiscovery() {
 function startDiscoveryJobs() {
   if (!cron) return;
   try {
+    // Monday 1 AM — full scan (all sources)
     cron.schedule('0 1 * * 1', () => runDiscovery(QUERIES).catch(console.error), { timezone: 'Asia/Kolkata' });
-    cron.schedule('0 2 * * 3', () => runDiscovery(QUERIES.filter(q => q.type === 'corporate')).catch(console.error), { timezone: 'Asia/Kolkata' });
-    cron.schedule('0 3 * * 5', () => runDiscovery(QUERIES.filter(q => q.platform === 'Instagram')).catch(console.error), { timezone: 'Asia/Kolkata' });
-    console.log('[Discovery] Jobs: Mon (full), Wed (corporate), Fri (Instagram)');
+    // Wednesday 2 AM — corporate job boards + intent signals
+    cron.schedule('0 2 * * 3', () => runDiscovery(QUERIES.filter(q => q.type === 'corporate' || SIGNAL_PLATFORMS.includes(q.platform))).catch(console.error), { timezone: 'Asia/Kolkata' });
+    // Friday 3 AM — social signals (Instagram, Facebook, Twitter, LinkedIn Posts)
+    cron.schedule('0 3 * * 5', () => runDiscovery(QUERIES.filter(q => [...SOCIAL_PLATFORMS, 'LinkedIn Posts'].includes(q.platform))).catch(console.error), { timezone: 'Asia/Kolkata' });
+    // Saturday 4 AM — government portals + affiliation/GPTW signals
+    cron.schedule('0 4 * * 6', () => runDiscovery(QUERIES.filter(q => GOVT_PLATFORMS.includes(q.platform) || ['GPTW Signal', 'Affiliation Signal'].includes(q.platform))).catch(console.error), { timezone: 'Asia/Kolkata' });
+    console.log('[Discovery] Jobs: Mon (full), Wed (corporate+signals), Fri (social), Sat (govt+GPTW)');
   } catch (e) { console.error('[Discovery] Cron setup:', e.message); }
 }
 
