@@ -44,6 +44,26 @@ const QUERIES = [
   { q: 'site:shine.com "school counsellor" OR "student counsellor" India 2025',
     target_role: 'Principal / Vice Principal', type: 'school', region: 'Pan India', platform: 'Shine' },
 
+  // ── SCHOOLS – LINKEDIN POSTS (organic vacancy announcements, not job listings)
+  // Schools, govt institutions, HR teams post vacancies as regular LinkedIn posts
+  // with hashtags like #CounsellorJobs #SchoolCounsellor #JobAlert
+  { q: 'site:linkedin.com/posts "school counsellor" vacancy OR hiring India 2025 #CounsellorJobs OR #SchoolCounsellor',
+    target_role: 'Principal / Vice Principal', type: 'school', region: 'Pan India', platform: 'LinkedIn Posts' },
+  { q: 'site:linkedin.com/posts "counsellor vacancy" school India 2025 #JobAlert OR #SchoolJobs',
+    target_role: 'Principal / Vice Principal', type: 'school', region: 'Pan India', platform: 'LinkedIn Posts' },
+  { q: 'site:linkedin.com/posts "school counsellor" OR "school psychologist" vacancy apply 2025 India',
+    target_role: 'Principal / Vice Principal', type: 'school', region: 'Pan India', platform: 'LinkedIn Posts' },
+  { q: 'site:linkedin.com/posts "Sainik school" OR "Kendriya Vidyalaya" OR "Navodaya" counsellor vacancy 2025',
+    target_role: 'Principal / Vice Principal', type: 'school', region: 'Pan India', platform: 'LinkedIn Posts' },
+  { q: 'site:linkedin.com/posts school "hiring counsellor" OR "counsellor required" OR "counsellor post" India 2025',
+    target_role: 'Principal / Vice Principal', type: 'school', region: 'Pan India', platform: 'LinkedIn Posts' },
+
+  // ── CORPORATES – LINKEDIN POSTS (HR teams announcing EAP / wellness hires)
+  { q: 'site:linkedin.com/posts "EAP counsellor" OR "employee assistance" vacancy hiring India 2025 #HRJobs',
+    target_role: 'CHRO / HR Director', type: 'corporate', region: 'Pan India', platform: 'LinkedIn Posts' },
+  { q: 'site:linkedin.com/posts "corporate wellness" OR "mental health counsellor" vacancy India 2025 #JobAlert',
+    target_role: 'HR Manager / L&D Head', type: 'corporate', region: 'Pan India', platform: 'LinkedIn Posts' },
+
   // ── SCHOOLS – INSTAGRAM HIRING POSTS ─────────────────────────────────────
   { q: 'site:instagram.com school "hiring counsellor" OR "counsellor vacancy" OR "school counsellor" 2025',
     target_role: 'Principal / Vice Principal', type: 'school', region: 'Pan India', platform: 'Instagram' },
@@ -98,6 +118,28 @@ const QUERIES = [
 ];
 
 function buildSearchPrompt(query) {
+  if (query.platform === 'LinkedIn Posts') {
+    return `You are a B2B sales intelligence agent for Cittaa, an AI mental health platform for organisations.
+
+Schools and companies in India post counsellor vacancy announcements as regular LinkedIn posts — NOT job listings. These posts often include hashtags like #CounsellorJobs #SchoolCounsellor #JobAlert and have full details: salary, qualification, location, last date to apply.
+
+Search for: "${query.q}"
+
+For each vacancy post you find on LinkedIn, extract:
+1. The hiring organisation's name and city/state
+2. The exact role they are hiring for (counsellor, psychologist, etc.)
+3. The LinkedIn post URL (linkedin.com/posts/...)
+4. Any contact info in the post (email, phone, website)
+5. Details mentioned: salary, qualification required, last date to apply
+6. Organisation type (school, government school, corporate, NGO)
+
+Focus on REAL posts from actual organisations — not reshares by job aggregator accounts.
+The source_url must be an actual linkedin.com/posts link.
+
+Region: ${query.region}
+Decision maker to approach: ${query.target_role}`;
+  }
+
   if (query.platform === 'Instagram') {
     return `You are a B2B sales intelligence agent for Cittaa, an AI mental health platform for organisations.
 
@@ -141,9 +183,11 @@ Decision maker to approach: ${query.target_role}`;
 
 function buildExtractionPrompt(text, query) {
   const isIG = query.platform === 'Instagram';
-  const urlNote = isIG
-    ? 'must be an instagram.com link (post or profile). Omit lead if no real IG URL.'
-    : `must be a direct URL to the job post on ${query.platform}. Omit lead if no real URL.`;
+  const isLIPost = query.platform === 'LinkedIn Posts';
+  const urlNote = isIG      ? 'must be an instagram.com link (post or profile). Omit lead if no real IG URL.'
+                : isLIPost  ? 'must be a linkedin.com/posts/... link. Omit lead if no real post URL.'
+                : `must be a direct URL to the job post on ${query.platform}. Omit lead if no real URL.`;
+  const sourceLabel = isIG ? 'Instagram hiring post' : isLIPost ? 'LinkedIn post' : `${query.platform} job posting`;
 
   return `Extract leads from this data. Return ONLY a valid JSON array.
 
@@ -166,7 +210,7 @@ Each object must have:
   "source_url": "REQUIRED — ${urlNote}",
   "target_role": "${query.target_role}",
   "job_title_hiring_for": "Exact role they are hiring for",
-  "discovery_source": "${query.platform}${isIG ? ' hiring post' : ' job posting'}",
+  "discovery_source": "${sourceLabel}",
   "discovery_query": "${query.q.replace(/"/g, '\\"')}"
 }
 
@@ -267,14 +311,16 @@ async function runDiscovery(batch) {
   return all;
 }
 
-// Balanced test set: school (Naukri) + school (LinkedIn) + school (Instagram) + corporate (Naukri) + corporate (LinkedIn)
+// Balanced test set — one query per major platform per segment
 async function runTestDiscovery() {
   const subset = [
     QUERIES.find(q => q.type === 'school'    && q.platform === 'Naukri'),
     QUERIES.find(q => q.type === 'school'    && q.platform === 'LinkedIn Jobs'),
+    QUERIES.find(q => q.type === 'school'    && q.platform === 'LinkedIn Posts'),   // organic posts
     QUERIES.find(q => q.type === 'school'    && q.platform === 'Instagram'),
     QUERIES.find(q => q.type === 'corporate' && q.platform === 'Naukri'),
     QUERIES.find(q => q.type === 'corporate' && q.platform === 'LinkedIn Jobs'),
+    QUERIES.find(q => q.type === 'corporate' && q.platform === 'LinkedIn Posts'),   // organic posts
   ].filter(Boolean);
   return runDiscovery(subset);
 }
