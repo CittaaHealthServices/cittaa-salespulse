@@ -35,11 +35,11 @@ const routeMap = [
   ['/api/compose',   './routes/compose'],
 ];
 
-for (const [mountPath, file] of routeMap) {
+for (const [path_, file] of routeMap) {
   try {
-    app.use(mountPath, require(file));
+    app.use(path_, require(file));
   } catch (e) {
-    console.warn(`[Startup] Route ${mountPath} failed to load:`, e.message);
+    console.warn(`[Startup] Route ${path_} failed to load:`, e.message);
   }
 }
 
