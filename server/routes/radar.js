@@ -273,4 +273,39 @@ router.get('/stats', async (req, res) => {
   }
 });
 
+
+// ─────────────────────────────────────────────────────────────────────────
+// GET /api/radar/list-models
+// Lists all Gemini models available for this API key
+// ─────────────────────────────────────────────────────────────────────────
+router.get('/list-models', async (req, res) => {
+  try {
+    const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY;
+    if (!key) return res.json({ error: 'No API key' });
+
+    const https = require('https');
+    const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${key}&pageSize=50`;
+
+    const data = await new Promise((resolve, reject) => {
+      https.get(url, (resp) => {
+        let body = '';
+        resp.on('data', chunk => body += chunk);
+        resp.on('end', () => {
+          try { resolve(JSON.parse(body)); }
+          catch(e) { resolve({ raw: body }); }
+        });
+      }).on('error', reject);
+    });
+
+    // Filter to models that support generateContent
+    const models = (data.models || [])
+      .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
+      .map(m => ({ name: m.name, displayName: m.displayName, description: (m.description||'').substring(0,80) }));
+
+    res.json({ total: models.length, models, raw_count: (data.models||[]).length });
+  } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
