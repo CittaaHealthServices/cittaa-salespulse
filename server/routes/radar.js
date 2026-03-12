@@ -98,23 +98,20 @@ router.get('/debug-scan', async (req, res) => {
       return res.json({ ok: false, log, error: 'GEMINI_API_KEY not set' });
     }
 
-    // 2. Init Gemini
+    // 2. Init Gemini (new @google/genai SDK)
     const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY;
-    const { GoogleGenerativeAI } = require('@google/generative-ai');
-    const genAI = new GoogleGenerativeAI(key);
+    const { GoogleGenAI } = require('@google/genai');
+    const ai = new GoogleGenAI({ apiKey: key });
     log.push({ step: 'gemini_init', ok: true });
 
-    // 3. Run a simple grounded search
-    const testQuery = 'site:naukri.com "school counsellor" Hyderabad 2025';
-    const searchModel = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
-      tools: [{ googleSearch: {} }],
+    // 3. Run grounded search
+    const testQuery = 'schools in Hyderabad India hiring school counsellor 2025';
+    const searchResp = await ai.models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents: `Find schools in Hyderabad India hiring counsellors. Search: "${testQuery}". List school names, locations, job URLs.`,
+      config: { tools: [{ googleSearch: {} }] },
     });
-
-    const searchResult = await searchModel.generateContent(
-      `Find schools in Hyderabad India hiring counsellors. Search: "${testQuery}". List school names, locations, job URLs.`
-    );
-    const narrative = searchResult.response.text();
+    const narrative = searchResp.text || '';
     log.push({ step: 'search', chars: narrative.length, preview: narrative.substring(0, 400) });
 
     if (narrative.length < 50) {
@@ -122,11 +119,11 @@ router.get('/debug-scan', async (req, res) => {
     }
 
     // 4. Extract JSON
-    const extractModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-    const extractResult = await extractModel.generateContent(
-      `From this text, extract school names as JSON array: [{"org_name":"...", "city":"...", "job_title_hiring_for":"..."}]\n\nText:\n${narrative}\n\nReturn ONLY the JSON array.`
-    );
-    const rawJson = extractResult.response.text().trim()
+    const extractResp = await ai.models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents: `From this text, extract school names as JSON array: [{"org_name":"...", "city":"...", "job_title_hiring_for":"..."}]\n\nText:\n${narrative}\n\nReturn ONLY the JSON array.`,
+    });
+    const rawJson = (extractResp.text || '').trim()
       .replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
     log.push({ step: 'extract', raw_preview: rawJson.substring(0, 400) });
 
