@@ -292,7 +292,7 @@ async function runQuery(query, genAI) {
     console.log(`[Discovery] Querying: ${query.platform} | ${query.type} | ${query.region}`);
 
     const searchModel = genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash-lite',
+      model: 'gemini-1.5-flash',
       tools: [{ googleSearch: {} }],
     });
 

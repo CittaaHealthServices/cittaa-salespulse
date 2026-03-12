@@ -107,7 +107,7 @@ router.get('/debug-scan', async (req, res) => {
     // 3. Run a simple grounded search
     const testQuery = 'site:naukri.com "school counsellor" Hyderabad 2025';
     const searchModel = genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash-lite',
+      model: 'gemini-1.5-flash',
       tools: [{ googleSearch: {} }],
     });
 
