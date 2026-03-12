@@ -1,5 +1,5 @@
 // jobs/leadDiscovery.js
-// Uses @google/genai (new SDK) with gemini-2.0-flash and Google Search grounding
+// Uses @google/genai (new SDK) with gemini-2.5-flash and Google Search grounding
 
 require('dotenv').config();
 
@@ -85,8 +85,45 @@ const QUERIES = [
 
 const SIGNAL_PLATFORMS = ['News Signal', 'GPTW Signal', 'Glassdoor Signal', 'Funding Signal'];
 
+// ── Extract readable platform name from a URL ──────────────────────────────
+function platformFromUrl(url) {
+  if (!url) return '';
+  try {
+    const host = new URL(url).hostname.replace('www.', '').toLowerCase();
+    if (host.includes('naukri'))       return 'Naukri';
+    if (host.includes('linkedin'))     return 'LinkedIn';
+    if (host.includes('indeed'))       return 'Indeed';
+    if (host.includes('timesjobs'))    return 'TimesJobs';
+    if (host.includes('shine'))        return 'Shine';
+    if (host.includes('monsterindia') || host.includes('foundit')) return 'Foundit';
+    if (host.includes('glassdoor'))    return 'Glassdoor';
+    if (host.includes('ambitionbox'))  return 'AmbitionBox';
+    if (host.includes('internshala')) return 'Internshala';
+    if (host.includes('hirist'))       return 'Hirist';
+    if (host.includes('twitter') || host.includes('x.com')) return 'Twitter/X';
+    if (host.includes('facebook'))     return 'Facebook';
+    if (host.includes('instagram'))    return 'Instagram';
+    if (host.includes('google'))       return '';   // suppress Google search fallbacks
+    return host.split('.')[0].charAt(0).toUpperCase() + host.split('.')[0].slice(1);
+  } catch { return ''; }
+}
+
+// ── Extract grounding source URLs from Gemini search response ─────────────
+function extractGroundingUrls(response) {
+  try {
+    const candidates = response?.candidates || [];
+    const chunks = candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    return chunks
+      .map(c => c?.web?.uri || '')
+      .filter(u => u && !u.includes('google.com/search'));
+  } catch { return []; }
+}
+
 function buildSearchPrompt(query) {
-  const orgLabel = query.platform === 'Universities' ? 'universities and colleges' : { school:'schools', corporate:'companies', clinic:'clinics/hospitals', ngo:'NGOs', coaching:'coaching institutes', rehab:'rehab centres' }[query.type] || 'organisations';
+  const orgLabel = query.platform === 'Universities'
+    ? 'universities and colleges'
+    : { school:'schools', corporate:'companies', clinic:'clinics/hospitals', ngo:'NGOs', coaching:'coaching institutes', rehab:'rehab centres' }[query.type] || 'organisations';
+
   return `You are a B2B sales intelligence agent for Cittaa, an AI mental health platform.
 
 Find ${orgLabel} in India that are actively hiring counsellors, psychologists, or mental health / wellness professionals. These are hot leads for Cittaa.
@@ -96,17 +133,22 @@ Search query: ${query.q}
 For each organisation found, provide:
 1. Organisation name and city/state
 2. Exact role being hired (or mental health signal found)
-3. Job posting URL or source URL if available
-4. Contact info if available (email, phone, website)
-5. Organisation size (students or employees) if mentioned
+3. EXACT job posting URL from Naukri, LinkedIn, Indeed, TimesJobs, Shine, or other job boards
+4. Which job board or website it was posted on (e.g., "Naukri", "LinkedIn", "Indeed")
+5. Contact info if available (email, phone, website)
+6. Organisation size (students or employees) if mentioned
 
 Region focus: ${query.region}
 Decision maker to reach: ${query.target_role}
 
-List all real organisations you can find. Be specific with names and locations.`;
+List all real organisations you can find. Include the specific job board URL wherever available.`;
 }
 
-function buildExtractionPrompt(text, query) {
+function buildExtractionPrompt(text, query, groundingUrls) {
+  const urlContext = groundingUrls.length > 0
+    ? `\n\nActual source URLs found during search (use these for source_url field):\n${groundingUrls.map((u, i) => `${i+1}. ${u}`).join('\n')}`
+    : '';
+
   return `Extract all organisations from the text below that are hiring counsellors or need mental health support.
 
 Return a JSON array only. Each item:
@@ -117,18 +159,22 @@ Return a JSON array only. Each item:
   "state": "State or empty string",
   "email": "",
   "phone": "",
-  "notes": "Why they are a lead",
+  "notes": "Why they are a lead — mention which job board if known",
   "ai_score": <40-95>,
-  "source_url": "URL if found, else empty string",
+  "source_url": "Exact job posting URL from Naukri/LinkedIn/Indeed/etc if available, else empty string",
+  "source_platform": "Name of job board: Naukri | LinkedIn | Indeed | TimesJobs | Shine | Foundit | Glassdoor | or empty",
   "target_role": "${query.target_role}",
   "job_title_hiring_for": "Role being hired for",
   "discovery_source": "${query.platform}",
   "discovery_query": "${query.q.replace(/"/g, '\\"')}"
 }
 
-Scoring: 85-95 = URL + contact; 70-84 = URL only; 55-69 = name + city; 40-54 = name only.
+Scoring: 85-95 = has real job board URL + contact; 70-84 = has real job board URL; 55-69 = name + city only; 40-54 = name only.
+For source_url: prefer Naukri, LinkedIn, Indeed URLs over company websites. Use the provided source URLs list to match.
+For source_platform: derive from the URL (e.g. naukri.com → "Naukri", linkedin.com → "LinkedIn").
 Include orgs even without a URL. Skip only if org_name is unknown.
 Return [] if nothing found.
+${urlContext}
 
 TEXT:
 ${text}
@@ -155,12 +201,39 @@ async function isDuplicate(orgName) {
   } catch { return false; }
 }
 
-async function saveLead(raw, query) {
+async function saveLead(raw, query, groundingUrls) {
   if (!raw.org_name || raw.org_name.trim().length < 2) return null;
   if (await isDuplicate(raw.org_name)) return null;
+
   try {
-    const fallbackUrl = raw.source_url ||
-      `https://www.google.com/search?q=${encodeURIComponent(raw.org_name + ' counsellor hiring India')}`;
+    // ── Determine source URL ──────────────────────────────────────────────
+    // Priority: extracted URL > grounding URL that mentions org name > Google fallback
+    let sourceUrl = raw.source_url || '';
+
+    // If no URL from extraction, try to find a relevant grounding URL
+    if (!sourceUrl && groundingUrls.length > 0) {
+      const orgWords = normalise(raw.org_name).split(' ').filter(w => w.length > 3);
+      // Try to find a grounding URL that contains the org name words
+      const matched = groundingUrls.find(u => {
+        const ul = u.toLowerCase();
+        return orgWords.some(w => ul.includes(w));
+      });
+      sourceUrl = matched || groundingUrls[0] || ''; // fallback to first grounding URL
+    }
+
+    // Last resort: Google search fallback
+    if (!sourceUrl) {
+      sourceUrl = `https://www.google.com/search?q=${encodeURIComponent(raw.org_name + ' counsellor hiring India')}`;
+    }
+
+    // ── Determine source platform ─────────────────────────────────────────
+    const sourcePlatform = raw.source_platform || platformFromUrl(sourceUrl) || query.platform;
+
+    // ── Build enriched notes ──────────────────────────────────────────────
+    const platformNote = sourcePlatform && sourcePlatform !== query.platform
+      ? `[Posted on ${sourcePlatform}] ` : '';
+    const notes = platformNote + (raw.notes || '');
+
     return await LeadQueue().create({
       org_name:              raw.org_name.trim(),
       type:                  raw.type     || query.type,
@@ -171,9 +244,9 @@ async function saveLead(raw, query) {
       email:                 raw.email    || '',
       phone:                 raw.phone    || '',
       employees_or_students: Number(raw.employees_or_students) || 0,
-      notes:                 raw.notes    || '',
+      notes,
       ai_score:              Math.min(Math.max(Number(raw.ai_score) || 50, 0), 100),
-      source_url:            fallbackUrl,
+      source_url:            sourceUrl,
       target_role:           raw.target_role          || query.target_role,
       job_title_hiring_for:  raw.job_title_hiring_for || '',
       discovery_source:      raw.discovery_source     || query.platform,
@@ -192,24 +265,30 @@ async function runQuery(query, ai) {
   try {
     console.log(`[Discovery] ${query.platform} | ${query.type} | ${query.region}`);
 
-    // Step 1: Grounded search
+    // Step 1: Grounded search — captures source URLs from Google Search
     const searchResp = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: buildSearchPrompt(query),
       config: { tools: [{ googleSearch: {} }] },
     });
     const narrative = searchResp.text;
-    console.log(`[Discovery]   search: ${(narrative||'').length} chars`);
+
+    // ── Extract actual source URLs from grounding metadata ────────────────
+    const groundingUrls = extractGroundingUrls(searchResp);
+    console.log(`[Discovery]   search: ${(narrative||'').length} chars | grounding URLs: ${groundingUrls.length}`);
+    if (groundingUrls.length > 0) {
+      groundingUrls.slice(0, 5).forEach(u => console.log(`[Discovery]     src: ${u}`));
+    }
 
     if (!narrative || narrative.length < 60) {
       console.log(`[Discovery]   empty result — skipping`);
       return saved;
     }
 
-    // Step 2: Extract JSON
+    // Step 2: Extract JSON — pass grounding URLs so Gemini can match them
     const extractResp = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
-      contents: buildExtractionPrompt(narrative, query),
+      contents: buildExtractionPrompt(narrative, query, groundingUrls),
     });
     let rawText = (extractResp.text || '').trim()
       .replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
@@ -233,8 +312,13 @@ async function runQuery(query, ai) {
     let sv = 0, dup = 0, skip = 0;
     for (const lead of leads.slice(0, 10)) {
       if (!lead.org_name) { skip++; continue; }
-      const doc = await saveLead(lead, query);
-      if (doc) { saved.push(doc); sv++; }
+      const doc = await saveLead(lead, query, groundingUrls);
+      if (doc) {
+        saved.push(doc);
+        sv++;
+        const plat = platformFromUrl(doc.source_url);
+        console.log(`[Discovery]   ✓ ${doc.org_name} | ${plat || 'no source'} | score:${doc.ai_score}`);
+      }
       else if (await isDuplicate(lead.org_name)) { dup++; }
       else { skip++; }
     }

@@ -1,441 +1,543 @@
 import { useState, useEffect, useCallback } from 'react';
 
-const API = import.meta.env.VITE_API_URL || '';
+const API = '/api/radar';
 
-// ── type colours ───────────────────────────────────────────────────────────
-const TYPE_COLOURS = {
-  school:    { bg: '#EEF2FF', border: '#818CF8', text: '#4338CA' },
-  corporate: { bg: '#F0F9FF', border: '#38BDF8', text: '#0369A1' },
-  clinic:    { bg: '#F0FDF4', border: '#4ADE80', text: '#166534' },
-  ngo:       { bg: '#FFFBEB', border: '#FCD34D', text: '#92400E' },
-  rehab:     { bg: '#FEF2F2', border: '#FCA5A5', text: '#991B1B' },
-  coaching:  { bg: '#FAF5FF', border: '#C084FC', text: '#6B21A8' },
+const TYPE_TABS = [
+  { key: 'all',          label: 'All Leads' },
+  { key: 'university',   label: '🎓 Universities' },
+  { key: 'school',       label: '🏫 Schools' },
+  { key: 'corporate',    label: '🏢 Corporate' },
+  { key: 'clinic',       label: '🏥 Clinics' },
+  { key: 'ngo',          label: '🤝 NGOs' },
+  { key: 'other',        label: 'Other' },
+];
+
+const STATUS_TABS = [
+  { key: 'pending',  label: 'Pending Review' },
+  { key: 'approved', label: 'Approved' },
+  { key: 'rejected', label: 'Rejected' },
+];
+
+// Map URL to recognisable platform name + colour
+function parsePlatform(url, notes) {
+  if (!url) {
+    // Try to extract from notes like "[Posted on Naukri] ..."
+    if (notes) {
+      const m = notes.match(/\[Posted on ([^\]]+)\]/);
+      if (m) return m[1];
+    }
+    return '';
+  }
+  try {
+    const host = new URL(url).hostname.replace('www.', '').toLowerCase();
+    if (host.includes('naukri'))       return 'Naukri';
+    if (host.includes('linkedin'))     return 'LinkedIn';
+    if (host.includes('indeed'))       return 'Indeed';
+    if (host.includes('timesjobs'))    return 'TimesJobs';
+    if (host.includes('shine'))        return 'Shine';
+    if (host.includes('monsterindia') || host.includes('foundit')) return 'Foundit';
+    if (host.includes('glassdoor'))    return 'Glassdoor';
+    if (host.includes('ambitionbox'))  return 'AmbitionBox';
+    if (host.includes('internshala')) return 'Internshala';
+    if (host.includes('hirist'))       return 'Hirist';
+    if (host.includes('twitter') || host.includes('x.com')) return 'Twitter/X';
+    if (host.includes('facebook'))     return 'Facebook';
+    if (host.includes('instagram'))    return 'Instagram';
+    if (host.includes('google'))       return '';  // Google search fallback — don't show
+    return '';
+  } catch { return ''; }
+}
+
+const PLATFORM_COLORS = {
+  'Naukri':      'bg-orange-100 text-orange-700 border-orange-200',
+  'LinkedIn':    'bg-blue-100 text-blue-700 border-blue-200',
+  'Indeed':      'bg-indigo-100 text-indigo-700 border-indigo-200',
+  'TimesJobs':   'bg-red-100 text-red-700 border-red-200',
+  'Shine':       'bg-yellow-100 text-yellow-800 border-yellow-200',
+  'Foundit':     'bg-purple-100 text-purple-700 border-purple-200',
+  'Glassdoor':   'bg-green-100 text-green-700 border-green-200',
+  'AmbitionBox': 'bg-teal-100 text-teal-700 border-teal-200',
+  'Internshala': 'bg-pink-100 text-pink-700 border-pink-200',
+  'Twitter/X':   'bg-gray-100 text-gray-700 border-gray-200',
+  'Facebook':    'bg-blue-100 text-blue-800 border-blue-200',
+  'Instagram':   'bg-pink-100 text-pink-700 border-pink-200',
 };
-function typeStyle(t) { return TYPE_COLOURS[t] || { bg: '#F8FAFC', border: '#CBD5E1', text: '#475569' }; }
 
-// ── helpers ────────────────────────────────────────────────────────────────
-function getTargetRole(item) {
-  if (item.target_role) return item.target_role;
+function PlatformBadge({ url, notes }) {
+  const name = parsePlatform(url, notes);
+  if (!name) return null;
+  const color = PLATFORM_COLORS[name] || 'bg-gray-100 text-gray-600 border-gray-200';
+  const isLink = url && !url.includes('google.com/search');
+  if (isLink) {
+    return (
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-xs font-semibold ${color} hover:opacity-80 transition-opacity`}
+        title={`View on ${name}`}
+      >
+        🔗 {name}
+      </a>
+    );
+  }
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded border text-xs font-semibold ${color}`}>
+      {name}
+    </span>
+  );
+}
+
+function scoreColor(score) {
+  if (score >= 80) return 'bg-green-100 text-green-800';
+  if (score >= 60) return 'bg-yellow-100 text-yellow-800';
+  return 'bg-red-100 text-red-800';
+}
+
+function typeBadge(type, discoverySource) {
+  if (discoverySource === 'Universities') return 'bg-purple-100 text-purple-700';
   const map = {
-    school:    'Principal / Vice Principal',
-    corporate: 'HR Manager / L&D Head',
-    clinic:    'Clinic Director',
-    ngo:       'Programme Director',
-    rehab:     'Centre Head',
-    coaching:  'Director / Owner',
+    school:    'bg-blue-100 text-blue-700',
+    corporate: 'bg-indigo-100 text-indigo-700',
+    clinic:    'bg-pink-100 text-pink-700',
+    ngo:       'bg-teal-100 text-teal-700',
+    coaching:  'bg-orange-100 text-orange-700',
+    rehab:     'bg-red-100 text-red-700',
   };
-  return map[item.type] || 'Decision Maker';
+  return map[type] || 'bg-gray-100 text-gray-700';
 }
 
-function shortUrl(url) {
-  if (!url) return null;
-  try { return new URL(url).hostname.replace('www.', ''); }
-  catch { return url.slice(0, 30); }
+function typeLabel(type, discoverySource) {
+  if (discoverySource === 'Universities') return 'University/College';
+  const map = {
+    school:    'School',
+    corporate: 'Corporate',
+    clinic:    'Clinic',
+    ngo:       'NGO',
+    coaching:  'Coaching',
+    rehab:     'Rehab',
+  };
+  return map[type] || type;
 }
 
-function scoreColour(score) {
-  if (score >= 80) return '#10B981';
-  if (score >= 60) return '#F59E0B';
-  return '#EF4444';
+function filterItems(items, typeTab) {
+  if (typeTab === 'all') return items;
+  if (typeTab === 'university') return items.filter(i => i.discovery_source === 'Universities');
+  if (typeTab === 'school')     return items.filter(i => i.type === 'school' && i.discovery_source !== 'Universities');
+  if (typeTab === 'corporate')  return items.filter(i => i.type === 'corporate');
+  if (typeTab === 'clinic')     return items.filter(i => i.type === 'clinic');
+  if (typeTab === 'ngo')        return items.filter(i => i.type === 'ngo');
+  return items.filter(i => !['school','corporate','clinic','ngo'].includes(i.type) && i.discovery_source !== 'Universities');
 }
 
-// ─────────────────────────────────────────────────────────────────────────
 export default function LeadRadar() {
-  const [items, setItems]       = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const [scanning, setScanning] = useState(false);
-  const [toast, setToast]       = useState(null);
-  const [filter, setFilter]     = useState('all');
-  const [approving, setApproving] = useState({});
-  const [contractModal, setContractModal] = useState(null); // { item, value }
+  const [statusTab, setStatusTab]   = useState('pending');
+  const [typeTab,   setTypeTab]     = useState('all');
+  const [items,     setItems]       = useState([]);
+  const [total,     setTotal]       = useState(0);
+  const [loading,   setLoading]     = useState(false);
+  const [scanning,  setScanning]    = useState(false);
+  const [scanMsg,   setScanMsg]     = useState('');
+  const [error,     setError]       = useState('');
+  const [approving, setApproving]   = useState({});
+  const [rejecting, setRejecting]   = useState({});
+  const [stats,     setStats]       = useState(null);
+  const [expandedId, setExpandedId] = useState(null);
+  const [page,      setPage]        = useState(1);
+  const LIMIT = 50;
 
-  // ── fetch queue ──────────────────────────────────────────────────────────
-  const fetchQueue = useCallback(async () => {
+  const fetchItems = useCallback(async () => {
     setLoading(true);
+    setError('');
     try {
-      const r = await fetch(`${API}/api/radar?status=pending&limit=50`);
-      const data = await r.json();
-      setItems(data.items || []);
+      const r = await fetch(`${API}?status=${statusTab}&limit=${LIMIT}&page=${page}`);
+      const d = await r.json();
+      if (d.error) throw new Error(d.error);
+      setItems(d.items || []);
+      setTotal(d.total || 0);
     } catch (e) {
-      showToast('Failed to load radar queue', 'error');
+      setError(e.message);
     } finally {
       setLoading(false);
     }
+  }, [statusTab, page]);
+
+  const fetchStats = useCallback(async () => {
+    try {
+      const r = await fetch(`${API}/stats`);
+      const d = await r.json();
+      setStats(d);
+    } catch (e) { /* silent */ }
   }, []);
 
-  useEffect(() => { fetchQueue(); }, [fetchQueue]);
+  useEffect(() => {
+    fetchItems();
+    fetchStats();
+  }, [fetchItems, fetchStats]);
 
-  // ── toast ────────────────────────────────────────────────────────────────
-  function showToast(msg, type = 'success') {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 4000);
-  }
+  useEffect(() => { setPage(1); }, [statusTab, typeTab]);
 
-  // ── trigger scan ─────────────────────────────────────────────────────────
-  async function handleScan() {
+  async function triggerScan() {
     setScanning(true);
-    showToast('Scanning job platforms… new leads will appear in 1-2 minutes', 'info');
+    setScanMsg('');
     try {
-      const r = await fetch(`${API}/api/radar/trigger`, { method: 'POST' });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.error || 'Scan failed');
-      // Refresh after a short delay to catch new leads
-      setTimeout(fetchQueue, 8000);
+      const r = await fetch(`${API}/trigger`, { method: 'POST' });
+      const d = await r.json();
+      setScanMsg(d.message || 'Scan started — check back in a minute');
+      setTimeout(() => { fetchItems(); fetchStats(); }, 8000);
     } catch (e) {
-      showToast(e.message, 'error');
+      setScanMsg('Error: ' + e.message);
     } finally {
       setScanning(false);
     }
   }
 
-  // ── approve ──────────────────────────────────────────────────────────────
-  function openApprove(item) {
-    setContractModal({ item, value: item.contract_value || '' });
-  }
-
-  async function confirmApprove() {
-    const { item, value } = contractModal;
-    setContractModal(null);
-    setApproving(a => ({ ...a, [item._id]: true }));
+  async function approve(id) {
+    setApproving(a => ({ ...a, [id]: true }));
     try {
-      const r = await fetch(`${API}/api/radar/approve/${item._id}`, {
-        method:  'POST',
+      const r = await fetch(`${API}/approve/${id}`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ contract_value: Number(value) || 0 }),
+        body: JSON.stringify({ owner: 'S', approver_name: 'Team' }),
       });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.error || 'Approve failed');
-      showToast(`✅ ${item.org_name} added to pipeline!`);
-      setItems(prev => prev.filter(i => i._id !== item._id));
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Failed');
+      setItems(prev => prev.filter(i => i._id !== id));
+      setTotal(t => t - 1);
+      fetchStats();
     } catch (e) {
-      showToast(e.message, 'error');
+      alert('Approve failed: ' + e.message);
     } finally {
-      setApproving(a => ({ ...a, [item._id]: false }));
+      setApproving(a => ({ ...a, [id]: false }));
     }
   }
 
-  // ── reject ───────────────────────────────────────────────────────────────
-  async function handleReject(item) {
+  async function reject(id) {
+    setRejecting(r => ({ ...r, [id]: true }));
     try {
-      await fetch(`${API}/api/radar/reject/${item._id}`, { method: 'POST' });
-      setItems(prev => prev.filter(i => i._id !== item._id));
+      const res = await fetch(`${API}/reject/${id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: '' }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'Failed');
+      setItems(prev => prev.filter(i => i._id !== id));
+      setTotal(t => t - 1);
+      fetchStats();
     } catch (e) {
-      showToast('Reject failed', 'error');
+      alert('Reject failed: ' + e.message);
+    } finally {
+      setRejecting(r => ({ ...r, [id]: false }));
     }
   }
 
-  // ── filter ───────────────────────────────────────────────────────────────
-  const TYPES = ['all', 'school', 'corporate', 'clinic', 'ngo', 'rehab', 'coaching'];
-  const displayed = filter === 'all' ? items : items.filter(i => i.type === filter);
+  const filtered = filterItems(items, typeTab);
 
-  // ─────────────────────────────────────────────────────────────────────────
+  const tabCounts = {
+    all:        items.length,
+    university: items.filter(i => i.discovery_source === 'Universities').length,
+    school:     items.filter(i => i.type === 'school' && i.discovery_source !== 'Universities').length,
+    corporate:  items.filter(i => i.type === 'corporate').length,
+    clinic:     items.filter(i => i.type === 'clinic').length,
+    ngo:        items.filter(i => i.type === 'ngo').length,
+    other:      items.filter(i => !['school','corporate','clinic','ngo'].includes(i.type) && i.discovery_source !== 'Universities').length,
+  };
+
   return (
-    <div style={{ padding: '28px 32px', maxWidth: 1100, margin: '0 auto' }}>
-
-      {/* ── header ── */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 }}>
+    <div className="p-6 max-w-7xl mx-auto">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, color: '#1E293B' }}>
-            📡 Lead Radar
-          </h1>
-          <p style={{ margin: '6px 0 0', color: '#64748B', fontSize: 14 }}>
-            Organisations hiring counsellors / wellness roles — hot signals for Cittaa
-          </p>
+          <h1 className="text-2xl font-bold text-gray-900">Lead Radar</h1>
+          <p className="text-sm text-gray-500 mt-1">AI-discovered leads awaiting review</p>
         </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <span style={{ fontSize: 13, color: '#64748B' }}>{displayed.length} lead{displayed.length !== 1 ? 's' : ''}</span>
+        <div className="flex gap-3 items-center">
+          {stats && (
+            <div className="flex gap-2 text-sm">
+              <span className="bg-yellow-100 text-yellow-800 px-3 py-1 rounded-full font-medium">
+                {stats.pending} pending
+              </span>
+              <span className="bg-green-100 text-green-800 px-3 py-1 rounded-full font-medium">
+                {stats.approved} approved
+              </span>
+            </div>
+          )}
           <button
-            onClick={fetchQueue}
-            style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid #E2E8F0', background: '#fff', color: '#475569', cursor: 'pointer', fontSize: 13 }}
-          >
-            ↻ Refresh
-          </button>
-          <button
-            onClick={handleScan}
+            onClick={triggerScan}
             disabled={scanning}
-            style={{
-              padding: '10px 20px', borderRadius: 10, border: 'none',
-              background: scanning ? '#94A3B8' : 'linear-gradient(135deg,#4F46E5,#7C3AED)',
-              color: '#fff', fontWeight: 600, fontSize: 14, cursor: scanning ? 'not-allowed' : 'pointer',
-              boxShadow: scanning ? 'none' : '0 4px 14px rgba(79,70,229,0.35)',
-              display: 'flex', alignItems: 'center', gap: 8,
-            }}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
           >
-            {scanning ? '⏳ Scanning…' : '🔍 Scan Job Platforms'}
+            {scanning ? (
+              <>
+                <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                </svg>
+                Scanning…
+              </>
+            ) : <>⚡ Run Scan</>}
+          </button>
+          <button
+            onClick={fetchItems}
+            disabled={loading}
+            className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
+          >
+            {loading ? '…' : '↺ Refresh'}
           </button>
         </div>
       </div>
 
-      {/* ── type filter tabs ── */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 24, flexWrap: 'wrap' }}>
-        {TYPES.map(t => {
-          const active = filter === t;
-          const s = t !== 'all' ? typeStyle(t) : null;
-          return (
-            <button
-              key={t}
-              onClick={() => setFilter(t)}
-              style={{
-                padding: '6px 14px', borderRadius: 20, border: `1px solid ${active ? (s?.border || '#4F46E5') : '#E2E8F0'}`,
-                background: active ? (s?.bg || '#EEF2FF') : '#fff',
-                color: active ? (s?.text || '#4338CA') : '#64748B',
-                fontWeight: active ? 600 : 400,
-                fontSize: 13, cursor: 'pointer', textTransform: 'capitalize',
-              }}
-            >
-              {t}
-            </button>
-          );
-        })}
+      {scanMsg && (
+        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+          {scanMsg}
+        </div>
+      )}
+
+      {/* Status Tabs */}
+      <div className="flex gap-1 mb-4 border-b border-gray-200">
+        {STATUS_TABS.map(t => (
+          <button
+            key={t.key}
+            onClick={() => setStatusTab(t.key)}
+            className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+              statusTab === t.key
+                ? 'bg-white border border-b-white border-gray-200 text-indigo-600 -mb-px'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      {/* ── loading ── */}
-      {loading && (
-        <div style={{ textAlign: 'center', padding: 60, color: '#94A3B8' }}>
-          <div style={{ fontSize: 36, marginBottom: 12 }}>⚙️</div>
-          <p>Loading radar queue…</p>
+      {/* Type Filter Tabs */}
+      <div className="flex flex-wrap gap-2 mb-5">
+        {TYPE_TABS.map(t => (
+          <button
+            key={t.key}
+            onClick={() => setTypeTab(t.key)}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors border ${
+              typeTab === t.key
+                ? 'bg-indigo-600 text-white border-indigo-600'
+                : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-400 hover:text-indigo-600'
+            }`}
+          >
+            {t.label}
+            {tabCounts[t.key] > 0 && (
+              <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-xs ${
+                typeTab === t.key ? 'bg-indigo-500' : 'bg-gray-100 text-gray-500'
+              }`}>
+                {tabCounts[t.key]}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* Error */}
+      {error && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+          ⚠️ {error}
         </div>
       )}
 
-      {/* ── empty ── */}
-      {!loading && displayed.length === 0 && (
-        <div style={{ textAlign: 'center', padding: 80, background: '#F8FAFC', borderRadius: 16, border: '1px dashed #E2E8F0' }}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>📡</div>
-          <h3 style={{ margin: 0, color: '#1E293B' }}>No leads in queue</h3>
-          <p style={{ color: '#64748B', marginTop: 8 }}>Click "Scan Job Platforms" to discover organisations hiring counsellors / wellness staff.</p>
+      {/* Results header */}
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-sm text-gray-500">
+          Showing <strong>{filtered.length}</strong> of <strong>{total}</strong> {statusTab} leads
+          {typeTab !== 'all' && ` · filtered by ${TYPE_TABS.find(t => t.key === typeTab)?.label}`}
+        </p>
+        {total > LIMIT && (
+          <div className="flex items-center gap-2 text-sm">
+            <button
+              onClick={() => setPage(p => Math.max(1, p-1))}
+              disabled={page === 1}
+              className="px-2 py-1 rounded border disabled:opacity-40 hover:bg-gray-50"
+            >‹</button>
+            <span className="text-gray-600">Page {page}</span>
+            <button
+              onClick={() => setPage(p => p+1)}
+              disabled={page * LIMIT >= total}
+              className="px-2 py-1 rounded border disabled:opacity-40 hover:bg-gray-50"
+            >›</button>
+          </div>
+        )}
+      </div>
+
+      {/* Lead Cards */}
+      {loading ? (
+        <div className="flex items-center justify-center h-48 text-gray-400">
+          <svg className="animate-spin h-6 w-6 mr-2" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+          </svg>
+          Loading leads…
         </div>
-      )}
-
-      {/* ── lead cards ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px,1fr))', gap: 20 }}>
-        {displayed.map(item => {
-          const ts = typeStyle(item.type);
-          const score = item.ai_score || 50;
-          const targetRole = getTargetRole(item);
-          const domain = shortUrl(item.source_url);
-
-          return (
+      ) : filtered.length === 0 ? (
+        <div className="text-center py-16 text-gray-400">
+          <div className="text-5xl mb-3">📭</div>
+          <p className="text-lg font-medium">No {statusTab} leads</p>
+          <p className="text-sm mt-1">
+            {statusTab === 'pending' ? 'Run a scan to discover new leads' : `No ${statusTab} leads in this category`}
+          </p>
+          {statusTab === 'pending' && (
+            <button
+              onClick={triggerScan}
+              disabled={scanning}
+              className="mt-4 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-lg text-sm font-medium"
+            >
+              ⚡ Run Scan Now
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {filtered.map(item => (
             <div
               key={item._id}
-              style={{
-                background: '#fff', borderRadius: 16,
-                border: `1.5px solid ${ts.border}`,
-                boxShadow: '0 2px 12px rgba(0,0,0,0.06)',
-                overflow: 'hidden',
-                opacity: approving[item._id] ? 0.6 : 1,
-                transition: 'opacity 0.2s',
-              }}
+              className="bg-white border border-gray-200 rounded-xl shadow-sm hover:shadow-md transition-shadow overflow-hidden"
             >
-              {/* card header */}
-              <div style={{ background: ts.bg, padding: '16px 18px', borderBottom: `1px solid ${ts.border}` }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <span style={{
-                      fontSize: 11, fontWeight: 700, color: ts.text,
-                      textTransform: 'uppercase', letterSpacing: '0.05em',
-                    }}>
-                      {item.type || 'lead'}
+              {/* Main row */}
+              <div className="flex items-start gap-4 p-4">
+                {/* Score */}
+                <div className={`flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center text-sm font-bold ${scoreColor(item.ai_score)}`}>
+                  {item.ai_score}
+                </div>
+
+                {/* Content */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-start gap-2 flex-wrap">
+                    <h3 className="font-semibold text-gray-900 text-base">{item.org_name}</h3>
+                    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${typeBadge(item.type, item.discovery_source)}`}>
+                      {typeLabel(item.type, item.discovery_source)}
                     </span>
-                    <h3 style={{ margin: '4px 0 0', fontSize: 16, fontWeight: 700, color: '#1E293B', lineHeight: 1.3 }}>
-                      {item.org_name}
-                    </h3>
-                    <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748B' }}>
-                      📍 {[item.city, item.state].filter(Boolean).join(', ') || 'India'}
-                    </p>
+                    {/* Source platform badge — clickable link if real URL */}
+                    <PlatformBadge url={item.source_url} notes={item.notes} />
                   </div>
-                  <div style={{
-                    width: 44, height: 44, borderRadius: '50%',
-                    background: scoreColour(score) + '20',
-                    border: `2px solid ${scoreColour(score)}`,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    flexShrink: 0, marginLeft: 10,
-                  }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: scoreColour(score) }}>{score}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* card body */}
-              <div style={{ padding: '14px 18px' }}>
-
-                {/* Job posting signal */}
-                {(item.job_title_hiring_for || item.discovery_source) && (
-                  <div style={{
-                    background: '#F0FDF4', border: '1px solid #BBF7D0',
-                    borderRadius: 10, padding: '10px 14px', marginBottom: 12,
-                  }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: '#166534', marginBottom: 6, textTransform: 'uppercase' }}>
-                      📋 Job Posting Signal
-                    </div>
+                  <div className="flex flex-wrap gap-3 mt-1 text-sm text-gray-500">
+                    {(item.city || item.state) && (
+                      <span>📍 {[item.city, item.state].filter(Boolean).join(', ')}</span>
+                    )}
+                    {item.target_role && (
+                      <span>👤 {item.target_role}</span>
+                    )}
                     {item.job_title_hiring_for && (
-                      <div style={{ fontSize: 13, color: '#15803D', fontWeight: 600 }}>
-                        Hiring: "{item.job_title_hiring_for}"
-                      </div>
+                      <span>💼 Hiring: {item.job_title_hiring_for}</span>
                     )}
-                    {item.discovery_source && (
-                      <div style={{ fontSize: 12, color: '#4ADE80', marginTop: 2 }}>
-                        Source: {item.discovery_source}
-                      </div>
-                    )}
-                    {domain && (
-                      <a
-                        href={item.source_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ fontSize: 12, color: '#166534', display: 'inline-block', marginTop: 4 }}
-                      >
-                        🔗 View job post → {domain}
-                      </a>
+                    {item.employees_or_students > 0 && (
+                      <span>👥 {item.employees_or_students.toLocaleString()}</span>
                     )}
                   </div>
-                )}
-
-                {/* Target role */}
-                <div style={{
-                  background: '#F5F3FF', border: '1px solid #DDD6FE',
-                  borderRadius: 10, padding: '8px 14px', marginBottom: 12,
-                }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: '#6D28D9', textTransform: 'uppercase' }}>🎯 Role to Approach</span>
-                  <div style={{ fontSize: 13, color: '#7C3AED', fontWeight: 600, marginTop: 2 }}>{targetRole}</div>
+                  {item.notes && (
+                    <p className="mt-1.5 text-sm text-gray-600 line-clamp-2">{item.notes.replace(/\[Posted on [^\]]+\]\s*/, '')}</p>
+                  )}
                 </div>
 
-                {/* Contact info */}
-                {item.contact_name && (
-                  <div style={{ fontSize: 13, color: '#475569', marginBottom: 8 }}>
-                    <span style={{ fontWeight: 600 }}>👤 {item.contact_name}</span>
-                    {item.role && <span style={{ color: '#94A3B8' }}> · {item.role}</span>}
-                  </div>
-                )}
-                {item.email && (
-                  <div style={{ fontSize: 13, color: '#475569', marginBottom: 4 }}>📧 {item.email}</div>
-                )}
-                {item.phone && (
-                  <div style={{ fontSize: 13, color: '#475569', marginBottom: 4 }}>📞 {item.phone}</div>
-                )}
-                {item.employees_or_students > 0 && (
-                  <div style={{ fontSize: 13, color: '#475569', marginBottom: 4 }}>
-                    👥 {item.employees_or_students.toLocaleString()} employees/students
-                  </div>
-                )}
-
-                {/* Notes */}
-                {item.notes && (
-                  <p style={{
-                    margin: '10px 0 0', fontSize: 12, color: '#64748B',
-                    lineHeight: 1.5, borderTop: '1px solid #F1F5F9', paddingTop: 10,
-                  }}>
-                    {item.notes}
-                  </p>
-                )}
+                {/* Actions */}
+                <div className="flex-shrink-0 flex items-center gap-2">
+                  <button
+                    onClick={() => setExpandedId(expandedId === item._id ? null : item._id)}
+                    className="text-gray-400 hover:text-gray-600 transition-colors"
+                    title="Details"
+                  >
+                    <svg className={`w-4 h-4 transition-transform ${expandedId === item._id ? 'rotate-180' : ''}`}
+                      fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  {statusTab === 'pending' && (
+                    <>
+                      <button
+                        onClick={() => approve(item._id)}
+                        disabled={approving[item._id]}
+                        className="bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+                      >
+                        {approving[item._id] ? '…' : '✓ Approve'}
+                      </button>
+                      <button
+                        onClick={() => reject(item._id)}
+                        disabled={rejecting[item._id]}
+                        className="bg-white hover:bg-red-50 border border-red-300 text-red-600 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+                      >
+                        {rejecting[item._id] ? '…' : '✕ Reject'}
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
 
-              {/* card actions */}
-              <div style={{ padding: '12px 18px', borderTop: '1px solid #F1F5F9', display: 'flex', gap: 10 }}>
-                <button
-                  onClick={() => handleReject(item)}
-                  style={{
-                    flex: 1, padding: '9px 0', borderRadius: 9,
-                    border: '1px solid #E2E8F0', background: '#fff',
-                    color: '#EF4444', fontWeight: 600, fontSize: 13, cursor: 'pointer',
-                  }}
-                >
-                  ✕ Skip
-                </button>
-                <button
-                  onClick={() => openApprove(item)}
-                  disabled={!!approving[item._id]}
-                  style={{
-                    flex: 2, padding: '9px 0', borderRadius: 9, border: 'none',
-                    background: approving[item._id]
-                      ? '#94A3B8'
-                      : 'linear-gradient(135deg,#10B981,#059669)',
-                    color: '#fff', fontWeight: 700, fontSize: 13,
-                    cursor: approving[item._id] ? 'not-allowed' : 'pointer',
-                    boxShadow: '0 2px 8px rgba(16,185,129,0.3)',
-                  }}
-                >
-                  {approving[item._id] ? 'Adding…' : '✓ Add to Pipeline'}
-                </button>
-              </div>
+              {/* Expanded details */}
+              {expandedId === item._id && (
+                <div className="border-t border-gray-100 px-4 py-3 bg-gray-50 grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+                  <div>
+                    <span className="text-gray-400 text-xs uppercase tracking-wide">Posted On</span>
+                    {item.source_url && !item.source_url.includes('google.com') ? (
+                      <a href={item.source_url} target="_blank" rel="noopener noreferrer"
+                        className="block font-medium text-indigo-600 hover:text-indigo-800 mt-0.5 truncate">
+                        {parsePlatform(item.source_url, item.notes) || item.source_url}
+                      </a>
+                    ) : (
+                      <p className="font-medium text-gray-500 mt-0.5">
+                        {parsePlatform(item.source_url, item.notes) || 'Not specified'}
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <span className="text-gray-400 text-xs uppercase tracking-wide">Signal Type</span>
+                    <p className="font-medium text-gray-700 mt-0.5">{item.discovery_source || '—'}</p>
+                  </div>
+                  <div>
+                    <span className="text-gray-400 text-xs uppercase tracking-wide">Hiring For</span>
+                    <p className="font-medium text-gray-700 mt-0.5">{item.job_title_hiring_for || '—'}</p>
+                  </div>
+                  <div>
+                    <span className="text-gray-400 text-xs uppercase tracking-wide">Target Role</span>
+                    <p className="font-medium text-gray-700 mt-0.5">{item.target_role || '—'}</p>
+                  </div>
+                  {item.email && (
+                    <div>
+                      <span className="text-gray-400 text-xs uppercase tracking-wide">Email</span>
+                      <p className="font-medium text-gray-700 mt-0.5">{item.email}</p>
+                    </div>
+                  )}
+                  {item.phone && (
+                    <div>
+                      <span className="text-gray-400 text-xs uppercase tracking-wide">Phone</span>
+                      <p className="font-medium text-gray-700 mt-0.5">{item.phone}</p>
+                    </div>
+                  )}
+                  {item.contact_name && (
+                    <div>
+                      <span className="text-gray-400 text-xs uppercase tracking-wide">Contact</span>
+                      <p className="font-medium text-gray-700 mt-0.5">{item.contact_name}</p>
+                    </div>
+                  )}
+                  <div className="col-span-2 md:col-span-3">
+                    <span className="text-gray-400 text-xs uppercase tracking-wide">Discovery Query</span>
+                    <p className="font-medium text-gray-600 mt-0.5 text-xs break-all">{item.discovery_query || '—'}</p>
+                  </div>
+                  {item.source_url && !item.source_url.includes('google.com') && (
+                    <div className="col-span-2 md:col-span-3">
+                      <span className="text-gray-400 text-xs uppercase tracking-wide">Source URL</span>
+                      <a href={item.source_url} target="_blank" rel="noopener noreferrer"
+                        className="block font-medium text-indigo-600 hover:text-indigo-800 mt-0.5 text-xs break-all">
+                        {item.source_url}
+                      </a>
+                    </div>
+                  )}
+                  {item.created_at && (
+                    <div>
+                      <span className="text-gray-400 text-xs uppercase tracking-wide">Discovered</span>
+                      <p className="font-medium text-gray-700 mt-0.5">
+                        {new Date(item.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-          );
-        })}
-      </div>
-
-      {/* ── Contract value modal ── */}
-      {contractModal && (
-        <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
-        }}>
-          <div style={{
-            background: '#fff', borderRadius: 16, padding: 32,
-            width: 380, boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
-          }}>
-            <h3 style={{ margin: '0 0 6px', fontSize: 18, color: '#1E293B' }}>
-              Add to Pipeline
-            </h3>
-            <p style={{ margin: '0 0 20px', color: '#64748B', fontSize: 14 }}>
-              {contractModal.item.org_name}
-            </p>
-
-            <label style={{ fontSize: 13, fontWeight: 600, color: '#475569' }}>
-              Estimated Contract Value (₹)
-            </label>
-            <input
-              type="number"
-              placeholder="e.g. 250000"
-              value={contractModal.value}
-              onChange={e => setContractModal(m => ({ ...m, value: e.target.value }))}
-              style={{
-                width: '100%', marginTop: 8, padding: '10px 14px',
-                border: '1.5px solid #E2E8F0', borderRadius: 9,
-                fontSize: 15, outline: 'none', boxSizing: 'border-box',
-              }}
-              autoFocus
-              onKeyDown={e => { if (e.key === 'Enter') confirmApprove(); if (e.key === 'Escape') setContractModal(null); }}
-            />
-
-            <div style={{ display: 'flex', gap: 12, marginTop: 20 }}>
-              <button
-                onClick={() => setContractModal(null)}
-                style={{
-                  flex: 1, padding: '11px 0', borderRadius: 9,
-                  border: '1px solid #E2E8F0', background: '#fff',
-                  color: '#64748B', fontWeight: 600, cursor: 'pointer',
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmApprove}
-                style={{
-                  flex: 2, padding: '11px 0', borderRadius: 9, border: 'none',
-                  background: 'linear-gradient(135deg,#10B981,#059669)',
-                  color: '#fff', fontWeight: 700, cursor: 'pointer',
-                }}
-              >
-                ✓ Confirm & Add
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── toast ── */}
-      {toast && (
-        <div style={{
-          position: 'fixed', bottom: 24, right: 24,
-          padding: '14px 22px', borderRadius: 12,
-          background: toast.type === 'error' ? '#FEF2F2'
-                    : toast.type === 'info'  ? '#EFF6FF' : '#F0FDF4',
-          border: `1px solid ${toast.type === 'error' ? '#FCA5A5' : toast.type === 'info' ? '#BAE6FD' : '#BBF7D0'}`,
-          color: toast.type === 'error' ? '#991B1B' : toast.type === 'info' ? '#1E40AF' : '#166534',
-          fontWeight: 500, fontSize: 14, zIndex: 9999,
-          boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
-          maxWidth: 380,
-        }}>
-          {toast.msg}
+          ))}
         </div>
       )}
     </div>
