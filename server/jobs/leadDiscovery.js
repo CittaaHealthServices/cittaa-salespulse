@@ -34,11 +34,19 @@ const QUERIES = [
     target_role: 'Principal / Vice Principal', type: 'school', region: 'Maharashtra', platform: 'Job Boards' },
   { q: 'CBSE ICSE schools India hiring school counsellor wellness coordinator 2025',
     target_role: 'Principal / Vice Principal', type: 'school', region: 'Pan India', platform: 'Job Boards' },
-  // ── SCHOOLS — Government
-  { q: 'Kendriya Vidyalaya Navodaya Vidyalaya Sainik School hiring counsellor vacancy 2025',
-    target_role: 'Principal / Vice Principal', type: 'school', region: 'Pan India', platform: 'Govt Portal' },
-  { q: 'government school India counsellor recruitment 2025 Telangana Karnataka Tamil Nadu',
-    target_role: 'Principal', type: 'school', region: 'South India', platform: 'Govt Portal' },
+  // ── UNIVERSITIES & COLLEGES
+  { q: 'universities in Hyderabad Bengaluru hiring student counsellor OR psychologist 2025',
+    target_role: 'Dean of Students / Registrar', type: 'school', region: 'South India', platform: 'Universities' },
+  { q: 'universities in Delhi Mumbai Chennai hiring student wellness counsellor OR psychologist 2025',
+    target_role: 'Dean of Students / Vice Chancellor', type: 'school', region: 'North & West India', platform: 'Universities' },
+  { q: 'private engineering colleges MBA colleges India hiring counsellor psychologist student wellness 2025',
+    target_role: 'Principal / Director', type: 'school', region: 'Pan India', platform: 'Universities' },
+  { q: 'deemed universities autonomous colleges India hiring mental health counsellor student support 2025',
+    target_role: 'Dean of Students / Registrar', type: 'school', region: 'Pan India', platform: 'Universities' },
+  { q: 'Hyderabad Bengaluru colleges hiring counsellor student mental health wellbeing 2025 naukri linkedin',
+    target_role: 'Dean of Students / Principal', type: 'school', region: 'South India', platform: 'Universities' },
+  { q: 'IIT NIT BITS private universities India hiring student counsellor mental health officer 2025',
+    target_role: 'Dean of Students / Registrar', type: 'school', region: 'Pan India', platform: 'Universities' },
   // ── SCHOOLS — Social media
   { q: 'school India hiring counsellor vacancy 2025 instagram facebook linkedin post announcement',
     target_role: 'Principal', type: 'school', region: 'Pan India', platform: 'Social Media' },
@@ -78,7 +86,7 @@ const QUERIES = [
 const SIGNAL_PLATFORMS = ['News Signal', 'GPTW Signal', 'Glassdoor Signal', 'Funding Signal'];
 
 function buildSearchPrompt(query) {
-  const orgLabel = { school:'schools', corporate:'companies', clinic:'clinics/hospitals', ngo:'NGOs', coaching:'coaching institutes', rehab:'rehab centres' }[query.type] || 'organisations';
+  const orgLabel = query.platform === 'Universities' ? 'universities and colleges' : { school:'schools', corporate:'companies', clinic:'clinics/hospitals', ngo:'NGOs', coaching:'coaching institutes', rehab:'rehab centres' }[query.type] || 'organisations';
   return `You are a B2B sales intelligence agent for Cittaa, an AI mental health platform.
 
 Find ${orgLabel} in India that are actively hiring counsellors, psychologists, or mental health / wellness professionals. These are hot leads for Cittaa.
@@ -261,7 +269,7 @@ async function runTestDiscovery() {
     QUERIES.filter(q => q.type === 'school'    && q.region.includes('Bengaluru')),
     QUERIES.filter(q => q.type === 'school'    && q.region.includes('Delhi')),
     QUERIES.filter(q => q.type === 'school'    && q.region.includes('Pan India') && q.platform === 'Job Boards'),
-    QUERIES.filter(q => q.type === 'school'    && q.platform === 'Govt Portal'),
+    QUERIES.filter(q => q.platform === 'Universities'),
     QUERIES.filter(q => q.type === 'corporate' && q.platform === 'Job Boards'),
     QUERIES.filter(q => q.type === 'corporate' && q.platform === 'News Signal'),
     QUERIES.filter(q => q.type === 'corporate' && q.platform === 'Funding Signal'),
@@ -279,8 +287,8 @@ function startDiscoveryJobs() {
     cron.schedule('0 1 * * 1', () => runDiscovery(QUERIES).catch(console.error), { timezone: 'Asia/Kolkata' });
     cron.schedule('0 2 * * 3', () => runDiscovery(QUERIES.filter(q => q.type === 'corporate' || SIGNAL_PLATFORMS.includes(q.platform))).catch(console.error), { timezone: 'Asia/Kolkata' });
     cron.schedule('0 3 * * 5', () => runDiscovery(QUERIES.filter(q => q.platform === 'Social Media')).catch(console.error), { timezone: 'Asia/Kolkata' });
-    cron.schedule('0 4 * * 6', () => runDiscovery(QUERIES.filter(q => q.platform === 'Govt Portal' || q.platform === 'GPTW Signal')).catch(console.error), { timezone: 'Asia/Kolkata' });
-    console.log('[Discovery] Cron: Mon(full) Wed(corp) Fri(social) Sat(govt)');
+    cron.schedule('0 4 * * 6', () => runDiscovery(QUERIES.filter(q => q.platform === 'Universities' || q.platform === 'GPTW Signal')).catch(console.error), { timezone: 'Asia/Kolkata' });
+    console.log('[Discovery] Cron: Mon(full) Wed(corp) Fri(social) Sat(uni)');
   } catch(e) { console.error('[Discovery] Cron:', e.message); }
 }
 
