@@ -107,7 +107,7 @@ router.get('/debug-scan', async (req, res) => {
     // 3. Run grounded search
     const testQuery = 'schools in Hyderabad India hiring school counsellor 2025';
     const searchResp = await ai.models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       contents: `Find schools in Hyderabad India hiring counsellors. Search: "${testQuery}". List school names, locations, job URLs.`,
       config: { tools: [{ googleSearch: {} }] },
     });
@@ -120,7 +120,7 @@ router.get('/debug-scan', async (req, res) => {
 
     // 4. Extract JSON
     const extractResp = await ai.models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       contents: `From this text, extract school names as JSON array: [{"org_name":"...", "city":"...", "job_title_hiring_for":"..."}]\n\nText:\n${narrative}\n\nReturn ONLY the JSON array.`,
     });
     const rawJson = (extractResp.text || '').trim()

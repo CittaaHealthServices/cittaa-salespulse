@@ -186,7 +186,7 @@ async function runQuery(query, ai) {
 
     // Step 1: Grounded search
     const searchResp = await ai.models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       contents: buildSearchPrompt(query),
       config: { tools: [{ googleSearch: {} }] },
     });
@@ -200,7 +200,7 @@ async function runQuery(query, ai) {
 
     // Step 2: Extract JSON
     const extractResp = await ai.models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       contents: buildExtractionPrompt(narrative, query),
     });
     let rawText = (extractResp.text || '').trim()
