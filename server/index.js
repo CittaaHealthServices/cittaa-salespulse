@@ -1,6 +1,4 @@
 // server/index.js — Cittaa SalesPulse API Server
-// Safe startup: port binds first, MongoDB + jobs connect after
-
 require('dotenv').config();
 const express = require('express');
 const cors    = require('cors');
@@ -9,72 +7,81 @@ const path    = require('path');
 const app  = express();
 const PORT = process.env.PORT || 4000;
 
-// ─── Middleware ────────────────────────────────────────────────────────────
 app.use(cors());
 app.use(express.json());
 
-// ─── Health (MUST be first — Railway checks this before anything else) ─────
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime(), ts: new Date().toISOString() });
-});
+// ─── Health (FIRST — Railway checks this before anything else) ─────────────
+app.get('/api/health', (req, res) =>
+  res.json({ status: 'ok', uptime: process.uptime(), ts: new Date().toISOString() })
+);
 
-// ─── Detailed healthcheck (for the health dashboard) ─────────────────────
-try {
-  app.use('/api/healthcheck', require('./routes/healthcheck'));
-} catch (e) {
-  console.warn('[Startup] healthcheck route failed to load:', e.message);
-}
-
-// ─── API routes ────────────────────────────────────────────────────────────
-const routeMap = [
-  ['/api/radar',     './routes/radar'],
-  ['/api/leads',     './routes/leads'],
-  ['/api/pipeline',  './routes/pipeline'],
-  ['/api/stats',     './routes/stats'],
-  ['/api/followups', './routes/followups'],
-  ['/api/compose',   './routes/compose'],
+// ─── Routes ────────────────────────────────────────────────────────────────
+const routes = [
+  ['/api/healthcheck', './routes/healthcheck'],
+  ['/api/radar',       './routes/radar'],
+  ['/api/leads',       './routes/leads'],
+  ['/api/pipeline',    './routes/pipeline'],
+  ['/api/stats',       './routes/stats'],
+  ['/api/followups',   './routes/followups'],
+  ['/api/compose',     './routes/compose'],
 ];
-
-for (const [mountPath, file] of routeMap) {
-  try {
-    app.use(mountPath, require(file));
-  } catch (e) {
-    console.warn(`[Startup] Route ${mountPath} failed to load:`, e.message);
-  }
+for (const [mp, file] of routes) {
+  try { app.use(mp, require(file)); }
+  catch(e) { console.warn(`[Startup] ${mp} failed:`, e.message); }
 }
 
-// ─── Serve React SPA ───────────────────────────────────────────────────────
+// ─── React SPA ─────────────────────────────────────────────────────────────
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
 app.use(express.static(clientDist));
-app.get('*', (req, res) => {
-  res.sendFile(path.join(clientDist, 'index.html'));
+app.get('*', (req, res) => res.sendFile(path.join(clientDist, 'index.html')));
+
+// ─── Unhandled error capture → alert email ─────────────────────────────────
+process.on('uncaughtException', async (err) => {
+  console.error('[Server] 💥 Uncaught exception:', err.message);
+  try {
+    const { sendAlert, logError } = require('./jobs/healthMonitor');
+    if (logError) logError('unhandled_error', err.message, err.stack);
+    await sendAlert('unhandled_error', { error: err.stack || err.message });
+  } catch(_) {}
+});
+process.on('unhandledRejection', async (reason) => {
+  const msg = (reason instanceof Error) ? reason.message : String(reason);
+  console.error('[Server] 💥 Unhandled rejection:', msg);
+  try {
+    const { logError } = require('./jobs/healthMonitor');
+    if (logError) logError('unhandled_error', msg, String(reason?.stack || reason));
+  } catch(_) {}
 });
 
-// ─── Start server first (Railway healthcheck needs this ASAP) ─────────────
+// ─── Start ────────────────────────────────────────────────────────────────
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[Server] ✅ Listening on port ${PORT}`);
 
-  // Connect MongoDB after port is bound
   const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI;
   if (!mongoUri) {
-    console.warn('[MongoDB] ⚠️  No MONGO_URI — skipping DB connection');
-  } else {
-    require('mongoose')
-      .connect(mongoUri)
-      .then(() => {
-        console.log('[MongoDB] ✅ Connected');
-
-        // Start background jobs
-        try {
-          const { startDiscoveryJobs } = require('./jobs/leadDiscovery');
-          if (typeof startDiscoveryJobs === 'function') startDiscoveryJobs();
-        } catch (e) { console.warn('[Jobs] leadDiscovery failed:', e.message); }
-
-        try {
-          const { start } = require('./jobs/reminderEngine');
-          if (typeof start === 'function') start();
-        } catch (e) { console.warn('[Jobs] reminderEngine failed:', e.message); }
-      })
-      .catch(e => console.error('[MongoDB] ❌ Connection failed:', e.message));
+    console.warn('[MongoDB] ⚠️  No MONGO_URI — skipping');
+    return;
   }
+
+  require('mongoose').connect(mongoUri)
+    .then(() => {
+      console.log('[MongoDB] ✅ Connected');
+
+      // Start jobs
+      for (const [label, mod, fn] of [
+        ['leadDiscovery',  './jobs/leadDiscovery',  'startDiscoveryJobs'],
+        ['reminderEngine', './jobs/reminderEngine',  'start'],
+        ['healthMonitor',  './jobs/healthMonitor',   'startHealthMonitor'],
+      ]) {
+        try {
+          const m = require(mod);
+          if (typeof m[fn] === 'function') m[fn]();
+        } catch(e) { console.warn(`[Jobs] ${label} failed:`, e.message); }
+      }
+    })
+    .catch(e => {
+      console.error('[MongoDB] ❌ Failed:', e.message);
+      // Alert on DB connect failure
+      try { require('./services/alertService').sendAlert('mongodb', { error: e.message }); } catch(_) {}
+    });
 });
