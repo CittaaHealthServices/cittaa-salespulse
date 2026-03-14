@@ -1,0 +1,36 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// PATCH INSTRUCTIONS for LeadHub.jsx (apply manually if file is locked):
+//
+// 1. In the EMPTY_LEAD const (top of file), the model now has target_role,
+//    source_url, discovery_query — no UI form change needed, these are read-only.
+//
+// 2. In the detail panel, after the Target Role banner block, add:
+//
+//   {/* Source website + search query */}
+//   {(selected.source_url || selected.discovery_query) && (
+//     <tr>
+//       <td colSpan={2} style={{ paddingTop: 4, paddingBottom: 8 }}>
+//         <div style={{ background: '#f0faf7', borderLeft: '3px solid #0d9488', borderRadius: '0 6px 6px 0', padding: '8px 12px' }}>
+//           {selected.source_url && (
+//             <div style={{ fontSize: '0.75rem', marginBottom: 3 }}>
+//               <span style={{ color: '#0d9488', fontWeight: 700, textTransform: 'uppercase', fontSize: '0.65rem' }}>🌐 Found on</span>{' '}
+//               <a href={selected.source_url} target="_blank" rel="noreferrer"
+//                 style={{ color: '#0d9488', fontWeight: 600, textDecoration: 'underline', fontSize: '0.8rem' }}>
+//                 {(() => { try { return new URL(selected.source_url).hostname.replace('www.', ''); } catch { return selected.source_url.slice(0, 40); } })()}
+//               </a>
+//             </div>
+//           )}
+//           {selected.discovery_query && (
+//             <div style={{ fontSize: '0.72rem', color: '#555' }}>
+//               <span style={{ color: '#0d9488', fontWeight: 700, textTransform: 'uppercase', fontSize: '0.65rem' }}>🔍 Search query</span>{' '}
+//               <span style={{ fontStyle: 'italic' }}>"{selected.discovery_query.slice(0, 100)}"</span>
+//             </div>
+//           )}
+//         </div>
+//       </td>
+//     </tr>
+//   )}
+//
+// 3. The Target / Contact column in the table already shows targetRoleLabel(lead)
+//    from the previous edit. If that edit was lost, re-apply it.
+// ─────────────────────────────────────────────────────────────────────────────
