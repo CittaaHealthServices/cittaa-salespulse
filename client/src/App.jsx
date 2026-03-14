@@ -7,6 +7,7 @@ import Pipeline from './pages/Pipeline';
 import AIComposer from './pages/AIComposer';
 import FollowupEngine from './pages/FollowupEngine';
 import LeadRadar from './pages/LeadRadar';
+import SystemHealth from './pages/SystemHealth';
 
 export default function App() {
   return (
@@ -28,6 +29,7 @@ export default function App() {
           <Route path="/compose" element={<AIComposer />} />
           <Route path="/followups" element={<FollowupEngine />} />
           <Route path="/radar" element={<LeadRadar />} />
+          <Route path="/system-health" element={<SystemHealth />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </Layout>

@@ -1,19 +1,36 @@
 import { NavLink } from 'react-router-dom';
+import { useState, useEffect } from 'react';
 import {
   LayoutDashboard, Users, KanbanSquare, Sparkles,
-  Bell, Radar,
+  Bell, Radar, ShieldCheck,
 } from 'lucide-react';
 
 const NAV = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/leads', icon: Users, label: 'Lead Hub' },
-  { to: '/pipeline', icon: KanbanSquare, label: 'Pipeline' },
-  { to: '/compose', icon: Sparkles, label: 'AI Composer' },
-  { to: '/followups', icon: Bell, label: 'Follow-ups' },
-  { to: '/radar', icon: Radar, label: 'Lead Radar' },
+  { to: '/leads',     icon: Users,           label: 'Lead Hub' },
+  { to: '/pipeline',  icon: KanbanSquare,    label: 'Pipeline' },
+  { to: '/compose',   icon: Sparkles,        label: 'AI Composer' },
+  { to: '/followups', icon: Bell,            label: 'Follow-ups' },
+  { to: '/radar',     icon: Radar,           label: 'Lead Radar' },
+  { to: '/system-health', icon: ShieldCheck, label: 'System Health', hasStatus: true },
 ];
 
 export default function Sidebar() {
+  const [sysOk, setSysOk] = useState(null);
+
+  useEffect(() => {
+    async function ping() {
+      try {
+        const r = await fetch('/api/health');
+        const d = await r.json();
+        setSysOk(d.status === 'ok');
+      } catch { setSysOk(false); }
+    }
+    ping();
+    const id = setInterval(ping, 60000);
+    return () => clearInterval(id);
+  }, []);
+
   return (
     <aside
       className="sidebar"
@@ -48,7 +65,7 @@ export default function Sidebar() {
 
       {/* Nav */}
       <nav style={{ flex: 1, padding: '0 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {NAV.map(({ to, icon: Icon, label }) => (
+        {NAV.map(({ to, icon: Icon, label, hasStatus }) => (
           <NavLink
             key={to}
             to={to}
@@ -84,7 +101,14 @@ export default function Sidebar() {
                   />
                 )}
                 <Icon size={17} strokeWidth={isActive ? 2.2 : 1.7} />
-                {label}
+                <span style={{ flex: 1 }}>{label}</span>
+                {hasStatus && sysOk !== null && (
+                  <span style={{
+                    width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+                    background: sysOk ? '#4ade80' : '#f87171',
+                    boxShadow: sysOk ? 'none' : '0 0 0 2px rgba(248,113,113,0.3)',
+                  }} />
+                )}
               </>
             )}
           </NavLink>
